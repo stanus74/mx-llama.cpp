@@ -577,7 +577,7 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
 
         // Minimal valid result: a cheap non-null pre-norm slot (not consumed during the replay),
         // no logits (n_outputs == 0, and the logits consumers are null-guarded).
-        res->t_h_pre_norm = inpSA;
+        res->t_h_nextn = inpSA;
         ggml_build_forward_expand(gf, inpSA);
         return;
     }
