@@ -1,11 +1,21 @@
 # gfx906 (MI50 / MI60) Optimization Notes
 
 Distilled reference for kernel/backend work on this fork's target hardware (AMD Instinct
-MI50/MI60, LLVM target `gfx906`). Condensed from the measured studies at
-<https://github.com/skyne98/wiki-gfx906> (data cross-checked 2026-02-21 on real 4× gfx906
-hosts, 60 CUs @ 1725 MHz). Numbers are microbenchmark-derived — directional, not contractual.
+MI50/MI60, LLVM target `gfx906`). Sources:
+- **Part A (ISA/kernel studies)** — <https://github.com/skyne98/wiki-gfx906> (measured
+  2026-02-21 on real 4× gfx906, 60 CUs @ 1725 MHz).
+- **Part B (operational tuning)** — <https://arkprojects.space/wiki/AMD_GFX906> (mixa3607
+  wiki: power/clock/PCIe tuning, tools, benchmark numbers).
+- **Part C (llama.cpp MMQ nwarps finding)** — <https://github.com/ggml-org/llama.cpp/discussions/23881>.
+
+Numbers are microbenchmark-/host-derived — directional, not contractual.
+
+The gfx906 card family also includes the **consumer/prosumer** boards **Radeon VII** and
+**Radeon Pro VII** (both 16 GB, 60 CUs), not just the Instinct MI50/MI60.
 
 ---
+
+# Part A — ISA & kernel-level (skyne98 studies)
 
 ## 1. Architecture baseline
 
@@ -128,6 +138,99 @@ Measured, hot-loop conversion (activations start FP32, 8 MAC/thread/iter):
 7. Multi-GPU: verify real Infinity-Fabric topology before optimizing collectives for P2P.
 8. Only quantize FP32 activations when conversion is amortized by high reuse.
 
+---
+
+# Part B — Operational tuning (mixa3607 wiki)
+
+Real-world power/clock/PCIe tuning on a 4× gfx906 rig (llama.cpp, model Gemma-4 31B Q8_0,
+`--split-mode tensor --flash-attn 1`, pp2048 / tg256). Numbers are host-specific.
+
+## 10. Power / clock overclocking (`upp` — SoftPowerPlay table editor)
+
+Tool: <https://github.com/sibradzic/upp> (edits the VBIOS SoftPowerPlay table). Envelope
+knobs: `MEM_MAX` (mem clock MHz), `GPU_MAX` (core MHz), `TDP_MAX` / `TDC_MAX` (power/current W).
+
+| Config | MEM | GPU | TDP | TDC | pp2048 (t/s) | tg256 (t/s) |
+|---|---:|---:|---:|---:|---|---|
+| Stock | 1000 | 1725 | 225 | 330 | 430.10 | 32.43 |
+| OC v1 | 1150 | 1850 | 300 | 330 | **457.45** | **34.05** |
+| OC v2 | 1150 | 1850 | 180 | 330 | 441.30 | 33.85 |
+| OC v3 | 1150 | 1850 | 140 | 330 | 415.37 | 32.40 |
+
+- **Memory clock matters most** for both pp and tg (HBM2 bandwidth-bound). Core OC 1725→1850
+  helps, and TDP can be pulled down to ~180 W with only a small hit (OC v2) for much better
+  perf/W than stock — good for dense multi-GPU rigs.
+- **Hotspot trick:** lowering `smcPPTable/TdcLimitGfx` 350 → 150 cut the hotspot by ~10 °C
+  with almost no perf drop (observed in vLLM).
+- RAS/error check: `sudo rocm-smi --showrasinfo`.
+
+## 11. PCIe link speed impact
+
+Force link speed via corundum's `pcie_set_speed.sh` (arg `4` = Gen4):
+```bash
+curl -L https://github.com/corundum/corundum/raw/refs/heads/master/fpga/lib/pcie/scripts/pcie_set_speed.sh > pcie_set_speed.sh
+chmod +x pcie_set_speed.sh
+sudo ./pcie_set_speed.sh <bus:dev.fn> 4     # e.g. 17:00.0
+```
+
+Gemma-4 31B Q8_0, all slots x8, tensor-split across 4 GPUs:
+
+| PCIe (x8) | pp2048 (t/s) | pp2048 @ d16384 | tg256 (t/s) |
+|---|---|---|---|
+| 1.0 | 285.30 | 248.42 | 28.90 |
+| 2.0 | 360.82 | 311.40 | 31.39 |
+| 3.0 | 414.26 | 355.50 | 31.95 |
+| 4.0 | **447.61** | **382.58** | **32.52** |
+
+- **Prompt processing is PCIe-bound** in tensor-split: ~+57 % from Gen1→Gen4 (inter-GPU
+  activation traffic). **Token generation is compute-bound**: only ~+13 %.
+- Practical takeaway for this fork's tensor-parallel path: ensure real Gen4 x8+ links and
+  healthy topology; pp throughput on multi-GPU depends heavily on it, tg much less.
+
+## 12. Tools (fan/power/clock control, VBIOS)
+
+- **`upp`** — SoftPowerPlay table editor (see §10), the primary OC/undervolt path.
+- **OhGodATool** (v1.2.1) / **wolfamdctrl** (v1.2.0, same CLI): live fan/TDP/TDC/clock/voltage:
+  `--set-fanspeed <pct>`, `--set-tdp <W>`, `--set-tdc <W>`, `--set-max-core-clock <MHz>`,
+  `--set-max-mem-clock <MHz>`, per-state `--core-clock`/`--mem-clock`/voltage indices.
+- **atitool** (AMD service tool 1.14.0.10): low-level `clock`/`powerplay`/`pcie`/`mc`/`flash`/
+  `hwid`/`gpustatus`/`raserrortest` subcommands; `-i` lists devices, `-asicinit` inits ASIC.
+- **rocm-smi** — `--showbw` (PCIe BW), `--showrasinfo` (ECC/RAS errors), standard monitoring.
+
+## Reference container
+
+The mixa3607 wiki ships a prebuilt gfx906 llama.cpp image:
+`docker.io/mixa3607/llama.cpp-gfx906:full-b8356-rocm-7.2.0` (useful to cross-check ROCm/HIP
+versions and build flags against our own gfx906 build).
+
+---
+
+# Part C — llama.cpp MMQ `nwarps` under-tuning on gfx906 (discussion #23881)
+
+**Directly actionable for this fork's gfx906 kernel tuning.** llama.cpp's MMQ (quantized
+mul-mat) picks warps-per-block from a `256 / warp_size` heuristic → `nwarps = 4` on gfx906
+(warp_size 64). That heuristic was designed for MFMA cards; on **non-MFMA gfx906 it badly
+under-utilizes the CUs**. Raising `nwarps` scales pp substantially:
+
+pp512, Q8, MI60:
+
+| nwarps | Qwen3 27B (dense) | Gemma 26B-A4B (MoE) |
+|---|---|---|
+| 2 | 84 (−53%) | 412 (−51%) |
+| **4 (baseline)** | 180 | 837 |
+| 8 | 237 (+32%) | 1091 (+30%) |
+| 16 | **277 (+54%)** | **1168 (+40%)** |
+
+- Confirmed beyond MI60: a second user measured **+76 % pp512 on an MI50 32 GB** (Qwen 3.5
+  9B Q8_0).
+- **Correctness caveat:** `test-backend-ops -o MUL_MAT` passes at nwarps=16, but a
+  "non-deterministic flicker" was seen at **nwarps=8** for `q5_1, m=16, n=1, k=32`
+  specifically — validate any change with `test-backend-ops -o MUL_MAT` before shipping.
+- Scope caveat: measured on Q8 only, single MI60/MI50. Treat as a strong lead for
+  re-evaluating the `256/warp_size` MMQ heuristic for non-MFMA AMD, not a blind constant.
+
+---
+
 ## Primary sources
 
 - ROCm GPU arch specs: <https://rocm.docs.amd.com/en/latest/reference/gpu-arch-specs.html>
@@ -135,4 +238,6 @@ Measured, hot-loop conversion (activations start FP32, 8 MAC/thread/iter):
 - LLVM AMDGPU usage: <https://llvm.org/docs/AMDGPUUsage.html>
 - LLVM gfx906 asm syntax: <https://llvm.org/docs/AMDGPU/AMDGPUAsmGFX906.html> (contrast gfx908 for MFMA)
 - AMD Vega 7nm Shader ISA: <https://gpuopen.com/wp-content/uploads/2019/11/Vega_7nm_Shader_ISA_26November2019.pdf>
-- Study source repo: <https://github.com/skyne98/wiki-gfx906>
+- ISA/kernel study repo: <https://github.com/skyne98/wiki-gfx906>
+- Operational tuning wiki: <https://arkprojects.space/wiki/AMD_GFX906>
+- MMQ nwarps discussion: <https://github.com/ggml-org/llama.cpp/discussions/23881>

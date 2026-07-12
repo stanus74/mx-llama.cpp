@@ -23,8 +23,11 @@ Diese Erweiterungen existieren nur in diesem Fork und müssen bei Upstream-Merge
 - **GCN-repackte Gewichte** (`repack-gcn.cu`): eigener Matvec/Dequant-Pfad, `ggml_backend_buft_is_cuda_repack`.
 - **Split-Buffer / Tensor-Split** (`ggml_backend_cuda_split_buffer_type*`, `-ts`): `ggml_backend_buft_is_cuda_split`.
 - **gfx906-Kernel-Tuning** — Hardware-Details & Optimierungsregeln in
-  [docs/gfx906-optimization-notes.md](docs/gfx906-optimization-notes.md) (ISA-Grenzen: kein MFMA,
-  nur `v_dot4/8`/`dot2`; LDS-Bank-Padding; KV-Cache `HSD`; FP32-vs-QDQ-Abwägung; Latency-Hiding).
+  [docs/gfx906-optimization-notes.md](docs/gfx906-optimization-notes.md): Teil A ISA/Kernel
+  (kein MFMA, nur `v_dot4/8`/`dot2`; LDS-Bank-Padding; KV-Cache `HSD`; FP32-vs-QDQ; Latency-Hiding),
+  Teil B operatives Tuning (`upp`-OC, PCIe-Gen-Einfluss auf pp, Fan/Power-Tools), Teil C der
+  **MMQ-`nwarps`-Fund** (Default 4 → 16 ergibt +54 % pp auf gfx906, da `256/warp_size` für
+  non-MFMA-Karten unterdimensioniert ist — mit `test-backend-ops -o MUL_MAT` verifizieren).
 
 ## Upstream-Merge-Workflow (wichtigste Lektion dieses Repos)
 
