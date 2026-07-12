@@ -76,6 +76,21 @@ Compiler durchreicht:
 ```
 So kann jeder Bench-Durchlauf mit einem reinen `cmake`-Flag konfiguriert werden.
 
+> **Automatisierung:** Der komplette Sweep (configure → build → `test-backend-ops`-Gate →
+> `llama-bench` → Ergebnistabelle) ist in [scripts/bench-gfx906-nwarps.sh](../scripts/bench-gfx906-nwarps.sh)
+> umgesetzt. Baut in eine separate `build-nwarps-sweep/`-Dir (lässt `build/` unangetastet),
+> nutzt ccache, mit den MI50-Standardflags (RCCL=ON, ROCWMMA_FATTN=OFF, LTO). Aufruf:
+> `scripts/bench-gfx906-nwarps.sh ~/data/models/DEIN_MODELL.gguf`. Sweep/Bench über Env-Vars
+> (`Q8_VALUES`, `OTHER_VALUES`, `BENCH_ARGS`, …) steuerbar.
+>
+> **Achtung TP-Load-OOM:** `-sm tensor` auf einem großen Modell OOMt beim Laden auf der
+> 16-GB-Karte (Gerät 0 = 16368 MiB; even-split gibt ihr ~die Hälfte der Gewichte + KV +
+> Compute-Buffer). **Das ist der zuvor gesehene `meta_buf`-Assert-Crash — kein Merge-Bug,
+> sondern ein bekanntes Setup-Limit** (auch im Build-Skript notiert: „TP + MTP crasht mit
+> ROCm OOM auf der 16GB-Karte"). Für den Sweep daher entweder `BENCH_ARGS="… -ts 1,2"`
+> (Split Richtung 32-GB-Karte), single-GPU (`BENCH_ENV="HIP_VISIBLE_DEVICES=1"`) oder
+> Layer-Split statt `-sm tensor`.
+
 ## 4. Benchmark-Matrix (auf echter MI50, `llama-bench`)
 
 Pro Konfiguration `pp512, pp2048, pp8192` (tg zum Gegencheck, sollte ~gleich bleiben, da
