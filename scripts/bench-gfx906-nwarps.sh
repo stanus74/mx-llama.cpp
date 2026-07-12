@@ -25,9 +25,13 @@ set -uo pipefail
 MODEL="${1:-${MODEL:-$HOME/data/models/Qwopus3.6-35B-A3B-Coder-APEX-MTP-Balanced.gguf}}"
 BUILD_DIR="${BUILD_DIR:-build-nwarps-sweep}"     # separate from your main build/
 
-# Sweep matrix (space-separated warp counts per knob):
-Q8_VALUES="${Q8_VALUES:-8 12 16}"
-OTHER_VALUES="${OTHER_VALUES:-4 8}"
+# Sweep matrix (space-separated warp counts per knob). Use POWERS OF 2 only — non-pow2 values
+# (e.g. 12) don't divide the MMQ tiles and fail the MUL_MAT gate.
+# NOTE: the Q8 knob only affects Q8_0-weight models; the OTHER knob affects every other quant
+# (Q4_K/Q5_K/Q6_K/IQ*/…). Sweep the dimension that matches your model's quant — for a non-Q8
+# model, fix Q8_VALUES="8" and sweep OTHER_VALUES.
+Q8_VALUES="${Q8_VALUES:-8}"
+OTHER_VALUES="${OTHER_VALUES:-4 8 16}"
 
 # Correctness gate:
 GATE_RUNS="${GATE_RUNS:-2}"
@@ -130,8 +134,14 @@ run_one() {
   # benchmark (json for reliable parsing)
   echo ">> $tag : benchmark"
   local jout="$OUTDIR/bench_q8-${q8}_other-${other}.json"
-  if ! env $BENCH_ENV "$BENCH_BIN" -m "$MODEL" $BENCH_ARGS -o json >"$jout" 2>"$OUTDIR/bench_q8-${q8}_other-${other}.err"; then
-    echo "   llama-bench FAILED (see .err — evtl. TP-OOM auf 16GB-Karte, siehe Kopf)"
+  local errf="$OUTDIR/bench_q8-${q8}_other-${other}.err"
+  if ! env $BENCH_ENV "$BENCH_BIN" -m "$MODEL" $BENCH_ARGS -o json >"$jout" 2>"$errf"; then
+    echo "   llama-bench FAILED (see $errf)"
+    if grep -q "failed to load model" "$errf" 2>/dev/null; then
+      echo "   -> Modell passt nicht in den sichtbaren VRAM. Kleineres/stärker quantisiertes"
+      echo "      Modell nehmen, oder Multi-GPU: BENCH_ENV=\"HIP_VISIBLE_DEVICES=0,1\""
+      echo "      BENCH_ARGS=\"... -sm tensor -ts 1,2 ...\""
+    fi
     printf '%s\t%s\t%s\tBENCH_FAIL\n' "$q8" "$other" "$gate" >>"$RESULTS"; return
   fi
 
