@@ -402,7 +402,7 @@ llama_context::llama_context(
         // model exposes only one llama_device (the Meta) so model.n_devices() == 1, hence
         // the n_devices > 1 gate is replaced by a per-mode guard.
         bool pipeline_parallel =
-            model.n_gpu_layers() > model.hparams.n_layer &&
+            model.n_gpu_layers() > model.hparams.n_layer_all &&
             cparams.offload_kqv &&
             !model.has_tensor_overrides() &&
             ((model.split_mode() == LLAMA_SPLIT_MODE_LAYER && model.n_devices() > 1) ||

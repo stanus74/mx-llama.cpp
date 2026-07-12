@@ -682,7 +682,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             return 0;
         }
         if (is_blk) {
-            const uint32_t n_layer = hparams.n_layer;
+            const uint32_t n_layer = hparams.n_layer_all;
             GGML_ASSERT(n_layer > 0);
             // contiguous block-wise mapping: stage = il * n_stages / n_layer
             return std::min<size_t>((size_t) il * ud->n_stages / n_layer, ud->n_stages - 1);

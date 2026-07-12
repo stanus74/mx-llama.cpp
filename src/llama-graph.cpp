@@ -2714,10 +2714,10 @@ void llm_graph_context::build_attn_store_kv(
     // K/V rotation, expand, then write into the KV cache via cpy_k/cpy_v. No attention,
     // wo, or output is built - the MTP head's prefill replay only needs the prompt K/V stored.
     if (inp->self_k_rot) {
-        k_cur = ggml_mul_mat_aux(ctx0, k_cur, inp->self_k_rot);
+        k_cur = llama_mul_mat_hadamard(ctx0, k_cur, inp->self_k_rot);
     }
     if (inp->self_v_rot) {
-        v_cur = ggml_mul_mat_aux(ctx0, v_cur, inp->self_v_rot);
+        v_cur = llama_mul_mat_hadamard(ctx0, v_cur, inp->self_v_rot);
     }
 
     ggml_build_forward_expand(gf, v_cur);
