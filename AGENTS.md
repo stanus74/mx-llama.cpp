@@ -22,7 +22,9 @@ Diese Erweiterungen existieren nur in diesem Fork und müssen bei Upstream-Merge
   `n_devices>1`; Layer→Stage-Mapping braucht `n_layer_all` (Gesamtzahl, nicht `n_layer()`).
 - **GCN-repackte Gewichte** (`repack-gcn.cu`): eigener Matvec/Dequant-Pfad, `ggml_backend_buft_is_cuda_repack`.
 - **Split-Buffer / Tensor-Split** (`ggml_backend_cuda_split_buffer_type*`, `-ts`): `ggml_backend_buft_is_cuda_split`.
-- **gfx906-Kernel-Tuning**.
+- **gfx906-Kernel-Tuning** — Hardware-Details & Optimierungsregeln in
+  [docs/gfx906-optimization-notes.md](docs/gfx906-optimization-notes.md) (ISA-Grenzen: kein MFMA,
+  nur `v_dot4/8`/`dot2`; LDS-Bank-Padding; KV-Cache `HSD`; FP32-vs-QDQ-Abwägung; Latency-Hiding).
 
 ## Upstream-Merge-Workflow (wichtigste Lektion dieses Repos)
 
