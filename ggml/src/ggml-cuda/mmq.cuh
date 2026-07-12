@@ -300,14 +300,30 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 }
 #endif // AMD_MFMA_AVAILABLE
 
+// gfx906 (MI50/MI60) MMQ warps-per-block, tunable at compile time.
+// The stock `256/warp_size` heuristic (= 4 warps here) under-utilizes gfx906 CUs on this
+// non-MFMA target; see docs/gfx906-optimization-notes.md Part C and llama.cpp discussion
+// #23881. Q8_0 was already bumped to 8. Override via -DGGML_MMQ_NWARPS_GFX906_Q8=<N> and
+// -DGGML_MMQ_NWARPS_GFX906_OTHER=<M> to A/B-benchmark other values (rebuild required, since
+// nwarps is constexpr / baked into __launch_bounds__). Host and device heuristics below MUST
+// stay in sync, and the non-type default MUST equal the OTHER value so that load_tiles kernels
+// which do not take an explicit nwarps template (everything except q8_0 / mxfp4) match the
+// launched block dims. Defaults preserve the previous behavior (Q8=8, others=4).
+#ifndef GGML_MMQ_NWARPS_GFX906_Q8
+#define GGML_MMQ_NWARPS_GFX906_Q8    8
+#endif
+#ifndef GGML_MMQ_NWARPS_GFX906_OTHER
+#define GGML_MMQ_NWARPS_GFX906_OTHER 4
+#endif
+
 #if defined(GGML_USE_HIP)
 template <ggml_type type>
 static int mmq_get_nwarps_host(const int cc, const int warp_size) {
     if (amd_mfma_available(cc)) {
         return 8;
     }
-    if (cc == GGML_CUDA_CC_VEGA20 && type == GGML_TYPE_Q8_0) {
-        return 512/warp_size;
+    if (cc == GGML_CUDA_CC_VEGA20) {
+        return type == GGML_TYPE_Q8_0 ? GGML_MMQ_NWARPS_GFX906_Q8 : GGML_MMQ_NWARPS_GFX906_OTHER;
     }
     return 256/warp_size;
 }
@@ -323,7 +339,7 @@ static constexpr __host__ __device__ int mmq_get_nwarps_compile() {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     return 8;
 #elif defined(GGML_USE_HIP) && defined(__gfx906__)
-    return type == GGML_TYPE_Q8_0 ? 8 : 4;
+    return type == GGML_TYPE_Q8_0 ? GGML_MMQ_NWARPS_GFX906_Q8 : GGML_MMQ_NWARPS_GFX906_OTHER;
 #elif defined(GGML_USE_HIP) && (defined(__GFX9__) || defined(__GFX8__))
     return 4;
 #else
@@ -334,6 +350,10 @@ static constexpr __host__ __device__ int mmq_get_nwarps_compile() {
 static constexpr __host__ __device__ int mmq_get_nwarps_compile_default() {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     return 8;
+#elif defined(GGML_USE_HIP) && defined(__gfx906__)
+    // non-type default = the OTHER value, so load_tiles without an explicit nwarps template
+    // (all types except q8_0 / mxfp4) stay consistent with the kernel's launched block dims.
+    return GGML_MMQ_NWARPS_GFX906_OTHER;
 #elif defined(GGML_USE_HIP) && (defined(__GFX9__) || defined(__GFX8__))
     return 4;
 #else

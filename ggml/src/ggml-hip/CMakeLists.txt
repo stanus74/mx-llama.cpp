@@ -122,6 +122,15 @@ if (NOT GGML_HIP_MMQ_MFMA)
     add_compile_definitions(GGML_HIP_NO_MMQ_MFMA)
 endif()
 
+# gfx906 MMQ warps-per-block tuning (see ggml/src/ggml-cuda/mmq.cuh and
+# docs/gfx906-optimization-notes.md Part C). Empty = keep the in-code defaults (Q8=8, others=4).
+if (DEFINED GGML_MMQ_NWARPS_GFX906_Q8)
+    add_compile_definitions(GGML_MMQ_NWARPS_GFX906_Q8=${GGML_MMQ_NWARPS_GFX906_Q8})
+endif()
+if (DEFINED GGML_MMQ_NWARPS_GFX906_OTHER)
+    add_compile_definitions(GGML_MMQ_NWARPS_GFX906_OTHER=${GGML_MMQ_NWARPS_GFX906_OTHER})
+endif()
+
 if (GGML_HIP_RCCL)
     add_compile_definitions(GGML_USE_NCCL) # RCCL has the same interface as NCCL.
 endif()
