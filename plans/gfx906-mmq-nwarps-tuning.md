@@ -21,8 +21,10 @@ Performance-Experiment, keine Merge-Korrektur.
 > weil load_tiles ohne explizites `nwarps`-Template davon abhängen — sonst Mismatch mit den
 > Launch-Bounds bei angehobenem OTHER-Wert.
 >
-> **Offene Nice-to-haves:** Q6_K/Q4_K-Gegenprobe; Q8_0-Modell besorgen und den 8→16-Fund aus
-> #23881 für den Q8-Knopf verifizieren.
+> **Gegenprobe Q6_K erledigt:** Qwen3.6 27B Q6_K zeigt dasselbe Muster (OTHER 4→8 = +19 %,
+> 16 regressiert, Gate 2/2) → Default breit bestätigt.
+> **Offene Nice-to-haves:** Q8_0-Modell besorgen und den 8→16-Fund aus #23881 für den
+> Q8-Knopf verifizieren.
 
 ---
 
