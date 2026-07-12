@@ -1351,7 +1351,6 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         verify_h.assign(n_seq, {});
         verify_h_rows.assign(n_seq, 0);
 
-        last_n_drafted.assign(n_seq, 0);
         disabled.assign(n_seq, false);
         // Fork MTP optimizations are opt-in via LLAMA_ENABLE_MTP_OPT. Unset (the default) gives
         // upstream draft-mtp behavior: per-chunk prefill, the draft pipeline ring, and no adaptive
