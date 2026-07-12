@@ -308,12 +308,16 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 // nwarps is constexpr / baked into __launch_bounds__). Host and device heuristics below MUST
 // stay in sync, and the non-type default MUST equal the OTHER value so that load_tiles kernels
 // which do not take an explicit nwarps template (everything except q8_0 / mxfp4) match the
-// launched block dims. Defaults preserve the previous behavior (Q8=8, others=4).
+// launched block dims.
+// Measured on MI50 (qwen35 9B Q5_K, pp512, single GPU): OTHER 4 -> 8 gives +23% (554 -> 683
+// t/s), 16 regresses to 497 (occupancy cliff); MUL_MAT gate clean 2/2 at 8. So OTHER default
+// is now 8. Q8_0 stays 8 (no Q8 model available to re-sweep; discussion #23881 suggests 16
+// could help Q8 — verify before changing).
 #ifndef GGML_MMQ_NWARPS_GFX906_Q8
 #define GGML_MMQ_NWARPS_GFX906_Q8    8
 #endif
 #ifndef GGML_MMQ_NWARPS_GFX906_OTHER
-#define GGML_MMQ_NWARPS_GFX906_OTHER 4
+#define GGML_MMQ_NWARPS_GFX906_OTHER 8
 #endif
 
 #if defined(GGML_USE_HIP)

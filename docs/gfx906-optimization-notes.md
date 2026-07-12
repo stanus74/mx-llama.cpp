@@ -229,6 +229,23 @@ pp512, Q8, MI60:
 - Scope caveat: measured on Q8 only, single MI60/MI50. Treat as a strong lead for
   re-evaluating the `256/warp_size` MMQ heuristic for non-MFMA AMD, not a blind constant.
 
+### Our measurement (this fork, MI50)
+
+Swept via `scripts/bench-gfx906-nwarps.sh` on **MI50 32 GB, single GPU, qwen35 9B Q5_K,
+pp512** (the non-Q8 `OTHER` knob; MUL_MAT gate run each config):
+
+| OTHER nwarps | pp512 (t/s) | vs baseline | MUL_MAT gate |
+|---|---|---|---|
+| 4 (old default) | 554.7 | — | 2/2 |
+| **8** | **683.5** | **+23 %** | 2/2 |
+| 16 | 497.0 | −10 % | 2/2 |
+
+→ **`GGML_MMQ_NWARPS_GFX906_OTHER` default raised 4 → 8** in
+[mmq.cuh](../ggml/src/ggml-cuda/mmq.cuh). 16 hits an occupancy cliff on MI50 (fewer resident
+blocks under higher VGPR/LDS pressure). No K-quant flicker observed at 8. `Q8` knob left at 8
+(no Q8_0 model on hand to re-sweep; #23881's 16-for-Q8 lead still open). Cross-check on a
+Q6_K / Q4_K model is a nice-to-have but the win generalizes across the shared non-Q8 path.
+
 ---
 
 ## Primary sources

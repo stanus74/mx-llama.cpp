@@ -11,12 +11,18 @@ MMQ-`nwarps`-Heuristik über die aktuelle Fork-Einstellung hinaus getunt wird.
 **Status:** unabhängig vom Upstream-Merge (der Merge hat mmq.cuh nicht verändert). Reines
 Performance-Experiment, keine Merge-Korrektur.
 
-> **Umsetzungsstand:** Abschnitt 3 (Code + CMake) ist implementiert (Commit auf
-> `merge-upstream-20260712`). Defaults sind verhaltensneutral (Q8=8, OTHER=4). Abschnitte 4–6
-> (Benchmark-Sweep, `test-backend-ops`-Gate, finale Werte) laufen auf dem Server und stehen
-> noch aus. Zusätzlich zum Plan wurde `mmq_get_nwarps_compile_default()` mitgezogen (gfx906 →
-> OTHER), weil load_tiles ohne explizites `nwarps`-Template davon abhängen — sonst Mismatch
-> mit den Launch-Bounds bei angehobenem OTHER-Wert.
+> **Umsetzungsstand: ABGESCHLOSSEN.** Abschnitt 3 (Code + CMake) implementiert,
+> Sweep-Skript ([scripts/bench-gfx906-nwarps.sh](../scripts/bench-gfx906-nwarps.sh))
+> gebaut, Sweep auf MI50 durchgeführt (Abschnitte 4–6). **Ergebnis: OTHER 4 → 8 = +23 %
+> pp512** (qwen35 9B Q5_K, single GPU, MUL_MAT-Gate 2/2); 16 regressiert (Occupancy-Klippe).
+> Neuer Default `GGML_MMQ_NWARPS_GFX906_OTHER = 8` in mmq.cuh, dokumentiert in
+> docs/gfx906-optimization-notes.md Teil C. Q8-Knopf bleibt 8 (kein Q8-Modell zum Nachmessen).
+> Zusätzlich zum Plan wurde `mmq_get_nwarps_compile_default()` mitgezogen (gfx906 → OTHER),
+> weil load_tiles ohne explizites `nwarps`-Template davon abhängen — sonst Mismatch mit den
+> Launch-Bounds bei angehobenem OTHER-Wert.
+>
+> **Offene Nice-to-haves:** Q6_K/Q4_K-Gegenprobe; Q8_0-Modell besorgen und den 8→16-Fund aus
+> #23881 für den Q8-Knopf verifizieren.
 
 ---
 
