@@ -13,10 +13,10 @@
 # Usage:  scripts/bench-gfx906-nwarps.sh [MODEL_PATH]
 # Tunables are the env vars in the CONFIG block below.
 #
-# ⚠ TP (-sm tensor) load OOMs on the 16GB card for large models (device 0 = 16368 MiB): the
-#   default even split gives it ~half the weights + KV + compute buffers. If llama-bench
-#   crashes at load (GGML_ASSERT meta_buf...), bias the split toward the 32GB card via
-#   BENCH_ARGS="... -ts 1,2", or bench single-GPU (HIP_VISIBLE_DEVICES=1) / layer-split.
+# Default runs single-GPU on the 32GB card (device 1). TP (-sm tensor) load OOMs on the 16GB
+# card for large models (device 0 = 16368 MiB, the even split gives it ~half the weights + KV
+# + compute buffers -> the GGML_ASSERT meta_buf... crash). To bench multi-GPU TP anyway, set
+# BENCH_ENV="HIP_VISIBLE_DEVICES=0,1" and BENCH_ARGS="... -sm tensor -ts 1,2 ...".
 set -uo pipefail
 
 [[ ! -f "CMakeLists.txt" ]] && echo "❌ Nicht im llama.cpp-Root-Verzeichnis!" && exit 1
@@ -33,9 +33,13 @@ OTHER_VALUES="${OTHER_VALUES:-4 8}"
 GATE_RUNS="${GATE_RUNS:-2}"
 SKIP_GATE="${SKIP_GATE:-0}"
 
-# Benchmark (your exact command minus model + -o):
-BENCH_ENV="${BENCH_ENV:-HIP_VISIBLE_DEVICES=0,1}"
-BENCH_ARGS="${BENCH_ARGS:--ngl 99 -fa 1 -mmp 0 -dio 1 -r 3 -sm tensor -p 512 -n 0}"
+# Benchmark (minus model + -o). Default: single GPU on the 32GB card (device 1), no tensor
+# split — avoids the TP-load OOM on the 16GB card and isolates the MMQ kernel perf cleanly.
+# The model must fit on that one card; use a smaller/more-quantized model if it doesn't (the
+# nwarps effect shows on any quantized model). For multi-GPU TP instead:
+#   BENCH_ENV="HIP_VISIBLE_DEVICES=0,1" BENCH_ARGS="... -sm tensor -ts 1,2 ..."
+BENCH_ENV="${BENCH_ENV:-HIP_VISIBLE_DEVICES=1}"
+BENCH_ARGS="${BENCH_ARGS:--ngl 99 -fa 1 -mmp 0 -dio 1 -r 3 -p 512 -n 0}"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUTDIR="${OUTDIR:-bench-nwarps-$STAMP}"
