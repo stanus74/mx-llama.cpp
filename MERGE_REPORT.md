@@ -18,6 +18,15 @@ Ein erster HIP-Build (gfx906) auf einem Testserver schlug fehl: `ggml_backend_cu
 
 **Lehre für künftige Syncs:** Bei großen Merges reicht es nicht, nur die von Git gemeldeten Konfliktdateien zu prüfen — stille, automatisch aufgelöste Löschungen ganzer Subsysteme sind möglich, wenn der Fork in der betroffenen Code-Region sonst keine eigenen Änderungen hat. Empfehlung: nach jedem größeren Merge einen Symbol-Diff zwischen altem HEAD und neuem Merge-Ergebnis fahren (Funktionen/Structs, die im alten HEAD definiert waren, im neuen Stand aber fehlen, obwohl sie noch aufgerufen werden) — genau dieser Check hat den Fehler hier gefunden, nachdem der Build fehlschlug. Idealerweise vor dem Build, nicht danach.
 
+## Nachtrag 2 (Build-Fehler auf dem Server, Commit `4caafda1c`)
+
+Zweiter fehlgeschlagener HIP-Build (gfx906), zwei unabhängige Ursachen:
+
+1. **`hparams.n_layer` field → method (`src/llama-context.cpp:405`, `src/llama-model.cpp:685`).** Upstream hat das alte reine Feld `llama_hparams::n_layer` in zwei Konzepte aufgespalten: `n_layer_all` (Gesamtzahl aller Layer inkl. MTP/Nextn-Layer, weiterhin ein Feld) und die neue Methode `n_layer()` (effektive Layer-Anzahl, **ohne** Nextn-Layer: `n_layer_all - n_layer_nextn`). Diese globale Umbenennung wurde von Git beim Auto-Merge in praktisch allen Modell-Dateien (`src/models/*.cpp`) klaglos übernommen, da dort jeweils nur upstream Änderungen vornahm. Zwei **fork-exklusive** Stellen ohne upstream-Gegenstück (Pipeline-Parallel-Gate in `llama-context.cpp`, Layer→Pipeline-Stage-Mapping für Multi-Stage-Tensor-Parallel in `llama-model.cpp`) wurden dabei nicht mitgezogen und blieben beim alten Feldnamen `n_layer`, der jetzt aber die Methode meint → Compile-Fehler. Da beide Stellen die **Gesamt**-Layer-Anzahl brauchen (nicht die um Nextn-Layer reduzierte effektive Zahl), wurden sie auf `n_layer_all` umgestellt — das entspricht der ursprünglichen Fork-Semantik von vor dem Split.
+2. **`ggml_mul_mat_aux` undefiniert (`src/llama-graph.cpp:2717/2720`, Funktion `build_attn_store_kv`).** Dieser Fehler existierte bereits **vor dem Merge** im alten Fork-HEAD (`6699c5a14`, verifiziert per `git log -S`) und hat nichts mit dem Merge zu tun — offenbar wurde dieser Codepfad (MTP-KV-only-Prefill kombiniert mit rotierten/quantisierten Aktivierungen) bisher nie kompiliert/durchlaufen. Der korrekte Helper ist `llama_mul_mat_hadamard` (wird direkt darüber in `build_attn()` für dasselbe K/V-Rotationsmuster verwendet). Fix: Aufruf umbenannt.
+
+**Lehre:** Der Symbol-Diff-Ansatz aus Nachtrag 1 (Funktionen/Structs) hätte Fund 2 nicht automatisch erkannt, da `ggml_mul_mat_aux` nie irgendwo definiert war (kein Rename-Opfer, sondern von Anfang an falsch benannt) — sowas findet nur der Compiler. Fund 1 zeigt eine weitere Variante des Nachtrag-1-Problems: nicht nur *gelöschte* Symbole sind gefährlich, auch *umbenannte/umstrukturierte* API (Feld → Methode mit anderer Semantik) kann fork-exklusiven Code silently brechen, wenn diese Stellen nicht Teil eines Git-Konflikts waren.
+
 ---
 
 ## Konflikt-Übersicht (9 Dateien)
