@@ -27,6 +27,16 @@ Zweiter fehlgeschlagener HIP-Build (gfx906), zwei unabhängige Ursachen:
 
 **Lehre:** Der Symbol-Diff-Ansatz aus Nachtrag 1 (Funktionen/Structs) hätte Fund 2 nicht automatisch erkannt, da `ggml_mul_mat_aux` nie irgendwo definiert war (kein Rename-Opfer, sondern von Anfang an falsch benannt) — sowas findet nur der Compiler. Fund 1 zeigt eine weitere Variante des Nachtrag-1-Problems: nicht nur *gelöschte* Symbole sind gefährlich, auch *umbenannte/umstrukturierte* API (Feld → Methode mit anderer Semantik) kann fork-exklusiven Code silently brechen, wenn diese Stellen nicht Teil eines Git-Konflikts waren.
 
+## Nachtrag 3 (Build-Fehler auf dem Server, Commit `918364961`)
+
+Dritter fehlgeschlagener HIP-Build (gfx906): `error: no member named 't_h_pre_norm' in 'llm_graph_result'` in `src/models/qwen35.cpp:580`.
+
+**Ursache:** dieselbe Klasse wie Fund 1 in Nachtrag 2, nur beim `t_h_pre_norm` → `t_h_nextn`-Rename (upstream). Dieses Rename wurde bei der Konfliktauflösung in den drei **Konfliktblöcken** von `qwen35.cpp`/`qwen35moe.cpp` korrekt mitgezogen (siehe Konflikt-Details unten). Diese vierte Zuweisung sitzt jedoch im **fork-exklusiven** `mtp_prefill_kv_only`-Early-Return-Zweig (der KV-only-MTP-Prefill-Replay-Pfad, Phase 2b) — komplett außerhalb jedes Git-Konflikts — und blieb daher beim alten Feldnamen. `qwen35moe.cpp` hat keinen solchen Zweig, war also nicht betroffen. Fix: `res->t_h_pre_norm = inpSA;` → `res->t_h_nextn = inpSA;`.
+
+**Verifikation nach dem Fix:** Der gesamte Baum wurde per Grep auf verbliebene veraltete Symbole (`t_h_pre_norm`, `get_h_pre_norm`, `set/get_embeddings_pre_norm`, `embeddings_pre_norm_masked`) gegengeprüft — keine weiteren Reste (das legitime `pre_norm_accum`-Deferred-Prefill-Feature bleibt bestehen).
+
+**Übergreifendes Muster (Nachträge 2 & 3):** Die drei fehlgeschlagenen Builds hatten dieselbe Grundursache — upstream-weite Umbenennungen (`n_layer`-Feld→Methode, `t_h_pre_norm`→`t_h_nextn`, `embeddings_pre_norm`→`embeddings_nextn`), die Git in allen upstream-nahen Stellen automatisch anwendete, aber an **fork-exklusiven Stellen außerhalb von Konfliktblöcken** stehen ließ. Für künftige Syncs empfiehlt sich daher **vor dem Build** ein gezielter Grep nach den alten Symbolnamen über den gesamten Baum (nicht nur über die Konfliktdateien), sobald man ein upstream-Rename bei der Konfliktauflösung bemerkt — jedes solche Rename ist ein Kandidat für genau dieses Problem.
+
 ---
 
 ## Konflikt-Übersicht (9 Dateien)
