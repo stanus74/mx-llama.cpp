@@ -1162,7 +1162,11 @@ float * llama_context::set_embeddings_pre_norm_accum(int32_t n_tokens_cap) {
         return nullptr;
     }
 
-    const uint32_t n_embd   = model.hparams.n_embd;
+    // Row width = n_embd_out(): the accum stores rows of t_h_nextn, which the extraction in
+    // process_ubatch copies at n_embd_out() stride (matches embd_nextn). Equal to n_embd for
+    // the MTP models in use, but keep them consistent so a model with n_embd_out != n_embd
+    // can't under-allocate this buffer.
+    const uint32_t n_embd   = model.hparams.n_embd_out();
     const size_t   nfloats  = (size_t) n_tokens_cap * n_embd;
     const size_t   nbytes   = nfloats * sizeof(float);
 

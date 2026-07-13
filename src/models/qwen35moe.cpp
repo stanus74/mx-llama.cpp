@@ -718,7 +718,21 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
     cur = ggml_add(ctx0, cur, ffn_residual);
     cb(cur, "mtp_post_ffn", il);
 
-    // Pre-norm hidden state: used by the AR draft loop to seed the next MTP step.
+    // Apply the shared head norm, THEN publish t_h_nextn. This MUST match the trunk graph,
+    // which sets t_h_nextn = POST output_norm (upstream semantics): the AR draft loop and the
+    // target->draft hidden handoff (verify_h / pending_h) require both sides to use the same
+    // normalization. The norm runs over all positions before the output-row gather (cheap);
+    // only the LM head stays guarded by n_outputs>0 so prefill batches with no output rows
+    // still skip the expensive output projection.
+    {
+        ggml_tensor * head_norm_w = layer.nextn.shared_head_norm
+                ? layer.nextn.shared_head_norm
+                : model.output_norm;
+        GGML_ASSERT(head_norm_w && "QWEN35MOE MTP: missing both nextn.shared_head_norm and output_norm");
+        cur = build_norm(cur, head_norm_w, nullptr, LLM_NORM_RMS, -1);
+        cb(cur, "mtp_shared_head_norm", -1);
+    }
+
     cb(cur, "h_nextn", -1);
     res->t_h_nextn = cur;
 
@@ -726,13 +740,6 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
         if (inp_out_ids) {
             cur = ggml_get_rows(ctx0, cur, inp_out_ids);
         }
-
-        ggml_tensor * head_norm_w = layer.nextn.shared_head_norm
-                ? layer.nextn.shared_head_norm
-                : model.output_norm;
-        GGML_ASSERT(head_norm_w && "QWEN35MOE MTP: missing both nextn.shared_head_norm and output_norm");
-        cur = build_norm(cur, head_norm_w, nullptr, LLM_NORM_RMS, -1);
-        cb(cur, "mtp_shared_head_norm", -1);
 
         ggml_tensor * head_w = layer.nextn.shared_head_head ? layer.nextn.shared_head_head : model.output;
         ggml_tensor * head_s = layer.nextn.shared_head_head ? layer.nextn.shared_head_head_s : model.output_s;
