@@ -37,6 +37,22 @@ Dritter fehlgeschlagener HIP-Build (gfx906): `error: no member named 't_h_pre_no
 
 **Übergreifendes Muster (Nachträge 2 & 3):** Die drei fehlgeschlagenen Builds hatten dieselbe Grundursache — upstream-weite Umbenennungen (`n_layer`-Feld→Methode, `t_h_pre_norm`→`t_h_nextn`, `embeddings_pre_norm`→`embeddings_nextn`), die Git in allen upstream-nahen Stellen automatisch anwendete, aber an **fork-exklusiven Stellen außerhalb von Konfliktblöcken** stehen ließ. Für künftige Syncs empfiehlt sich daher **vor dem Build** ein gezielter Grep nach den alten Symbolnamen über den gesamten Baum (nicht nur über die Konfliktdateien), sobald man ein upstream-Rename bei der Konfliktauflösung bemerkt — jedes solche Rename ist ein Kandidat für genau dieses Problem.
 
+## Nachtrag 4 (Semantisches Review, Commit `949acc800`) — korrigiert Konflikt 6/7
+
+Nachträgliches Review der Konfliktauflösungen (nicht build-, sondern **laufzeit-/korrektheits**-getrieben) hat einen echten latenten Bug in der qwen35/qwen35moe-Auflösung aufgedeckt.
+
+**Befund:** Die Konfliktauflösung in `qwen35.cpp`/`qwen35moe.cpp` (Abschnitt 6/7 oben) behielt bewusst die **HEAD-Struktur** (Pre-Norm-Extraktion: `t_h_nextn` VOR der shared-head-Norm publizieren). Der **Trunk-Graph** derselben Dateien wurde aber **konfliktfrei** auf upstreams **Post-Norm**-Semantik gemergt (`t_h_nextn` NACH `output_norm`). Ergebnis: Trunk = post-norm, MTP-Head = pre-norm → **unterschiedliche Normalisierung für denselben Hidden-State-Slot**.
+
+`common/speculative.cpp` verlangt beide identisch: `verify_h` kommt aus dem Trunk des Ziel-Kontexts (post-norm), `pending_h` / die AR-Draft-Weitergabe aus dem MTP-Head des Draft-Kontexts. Ein Pre-/Post-Mismatch **kompiliert, lädt und zeigt sich nicht in `llama-bench` pp** (MTP-Drafting läuft dort nicht), **degradiert aber still die MTP-Draft-Accept-Rate** zur Generierungszeit.
+
+**Warum ursprünglich falsch entschieden:** Bei der Auflösung wurde nur der MTP-Head-Konfliktblock isoliert betrachtet und (nach Rücksprache) auf HEAD-Struktur gesetzt — ohne zu bemerken, dass der Trunk (kein Konflikt, daher nicht im Review-Fokus) bereits auf upstream-post-norm stand. Die beiden hängen aber zusammen.
+
+**Fix:** MTP-Head auf **post-norm** gebracht (upstream-konform, konsistent mit dem Trunk): shared-head-Norm zuerst über alle Positionen, dann `t_h_nextn` publizieren, dann der LM-Head unter dem bestehenden `n_outputs>0`-Guard (Norm ist billig, nur die Output-Projektion bleibt geguarded). Der kv-only-Early-Return bleibt unverändert (dessen `t_h_nextn` ist ein nicht konsumierter Dummy). Zusätzlich: der Deferred-Prefill-Accum-Buffer alloziert jetzt mit `n_embd_out()` statt `n_embd` (die Zeilenbreite von `t_h_nextn`, die die Extraktion kopiert) — No-op für die genutzten qwen35-Modelle (`n_embd_out == n_embd`), aber konsistent.
+
+**Lehre (Ergänzung zu 2 & 3):** Nicht nur *umbenannte* Symbole an fork-exklusiven Stellen sind gefährlich — auch **konfliktfrei gemergte Semantik-Änderungen** (hier: Pre→Post-Norm im Trunk) können eine *bewusst nach HEAD aufgelöste* Konfliktstelle inkonsistent machen. Bei zusammenhängenden Graphen (Trunk ↔ MTP-Head, Producer ↔ Consumer) muss die Auflösung **beide Seiten gemeinsam** betrachten, nicht den Konfliktblock isoliert. Solche Bugs überleben Build + `llama-bench` und brauchen ein funktionales Gate (MTP-Accept-Rate).
+
+**Noch zu tun:** MTP-Draft auf dem Server funktional gegentesten (Accept-Rate mit einem qwen35-MTP-Modell, Layer-Split), um den Fix zu bestätigen.
+
 ---
 
 ## Konflikt-Übersicht (9 Dateien)
