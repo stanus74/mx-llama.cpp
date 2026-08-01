@@ -24,6 +24,8 @@
 
 # IDE / OS
 
+/graphify-out/
+
 /.cache/
 /.ccls-cache/
 /.direnv/

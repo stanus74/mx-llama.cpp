@@ -1,0 +1,8 @@
+# alles ignorieren
+/*
+
+# ggml selbst freigeben
+!/ggml
+
+# alles innerhalb von ggml wieder freigeben (alle Typen, alle Ebenen)
+!/ggml/**
