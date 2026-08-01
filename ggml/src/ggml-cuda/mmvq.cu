@@ -3,6 +3,11 @@
 #include "unary.cuh"
 #include "vecdotq.cuh"
 
+#include "gfx906/gfx906-config.h"
+#include "gfx906/matmul/mmvq-q4_0.cuh"
+#include "gfx906/matmul/mmvq-q4_1.cuh"
+#include "gfx906/matmul/mmvq-q8_0.cuh"
+
 #include <cstdint>
 
 typedef float (*vec_dot_q_cuda_t)(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs);
@@ -865,6 +870,40 @@ static void mul_mat_vec_q_switch_ncols_dst(
     const mmvq_parameter_table_id table_id  = get_device_table_id(cc);
 
     const bool has_ids = ids != nullptr;
+    const bool has_fusion = fusion.gate != nullptr || fusion.x_bias != nullptr || fusion.gate_bias != nullptr ||
+                            fusion.x_scale != nullptr || fusion.gate_scale != nullptr;
+
+#if defined(GGML_USE_HIP) && defined(__gfx906__)
+    // gfx906 warp-cooperative GEMV from skyne98/llama.cpp-gfx906.
+    // Only for single-token generation (ncols_dst == 1) without fusion.
+    if (cc == GGML_CUDA_CC_VEGA20 && ncols_dst == 1 && !has_fusion && GFX906_MMVQ_WARP_COOP_ENABLED) {
+        switch (type) {
+            case GGML_TYPE_Q4_0:
+                gfx906_launch_mul_mat_vec_q4_0_warp_coop(
+                    vx, vy, ids, dst, ncols_x, nchannels_y_fd, stride_row_x,
+                    stride_col_dst, channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
+                    sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst, nrows_x,
+                    nchannels_dst, nsamples_dst, stream);
+                return;
+            case GGML_TYPE_Q4_1:
+                gfx906_launch_mul_mat_vec_q4_1_warp_coop(
+                    vx, vy, ids, dst, ncols_x, nchannels_y_fd, stride_row_x,
+                    stride_col_dst, channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
+                    sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst, nrows_x,
+                    nchannels_dst, nsamples_dst, stream);
+                return;
+            case GGML_TYPE_Q8_0:
+                gfx906_launch_mul_mat_vec_q8_0_warp_coop(
+                    vx, vy, ids, dst, ncols_x, nchannels_y_fd, stride_row_x,
+                    stride_col_dst, channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
+                    sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst, nrows_x,
+                    nchannels_dst, nsamples_dst, stream);
+                return;
+            default:
+                break;
+        }
+    }
+#endif // defined(GGML_USE_HIP) && defined(__gfx906__)
 
     const auto should_use_small_k = [&](int c_ncols_dst) {
         // When K is small, increase rows_per_block to match nwarps so each warp has more work to do

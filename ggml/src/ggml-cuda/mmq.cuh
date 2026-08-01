@@ -550,7 +550,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
                 constexpr int mcpy_int = max_cpy / sizeof(int);
                 static_assert(VDR_Q4_0_Q8_1_MMQ == 4, "bad VDR_Q4_0_Q8_1_MMQ");
 
-#if defined(GGML_USE_HIP) && defined(__gfx906__)
+#if defined(GGML_USE_HIP) && defined(__gfx906__) && GFX906_MMQ_VEC_LOAD_Q4_ENABLED
                 gfx906_load_q4_quants_vectorized_8(y_qs, j*MMQ_TILE_Y_K + kyqs, j*MMQ_TILE_Y_K + kyqs + QI4_0, u);
 #else
                 int tmp0[4], tmp1[4];
@@ -665,7 +665,7 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_dp4a(
                 constexpr int mcpy_int = max_cpy / sizeof(int);
                 static_assert(VDR_Q4_0_Q8_1_MMQ == 4, "bad VDR_Q4_0_Q8_1_MMQ");
 
-#if defined(GGML_USE_HIP) && defined(__gfx906__)
+#if defined(GGML_USE_HIP) && defined(__gfx906__) && GFX906_MMQ_VEC_LOAD_Q4_ENABLED
                 gfx906_load_q4_quants_vectorized_8(y_qs, j*MMQ_TILE_Y_K + kyqs, j*MMQ_TILE_Y_K + kyqs + QI4_1, u);
 #else
                 int tmp0[4], tmp1[4];

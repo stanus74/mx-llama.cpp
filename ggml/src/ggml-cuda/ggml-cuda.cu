@@ -33,6 +33,8 @@
 #include "ggml-cuda/mmq.cuh"
 #include "ggml-cuda/mmvf.cuh"
 #include "ggml-cuda/mmvq.cuh"
+#include "ggml-cuda/gfx906/gfx906-config.h"
+#include "ggml-cuda/gfx906/matmul/mmf.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
 #include "ggml-cuda/opt-step-sgd.cuh"
@@ -3284,6 +3286,34 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         ggml_cuda_mul_mat_q(ctx, src0, src1, nullptr, dst);
         return;
     }
+
+#if defined(GGML_USE_HIP) && defined(__gfx906__)
+    // GFX906 custom FP16 GEMM for medium batch sizes where hipBLAS/rocBLAS
+    // is suboptimal and upstream's MMA-based mmf path is not supported.
+    static const bool gfx906_mmf_disabled = getenv("GGML_CUDA_DISABLE_GFX906_MMF") != nullptr;
+    if (GFX906_MMF_ENABLED && !gfx906_mmf_disabled
+            && cc == GGML_CUDA_CC_VEGA20
+            && src0->type == GGML_TYPE_F16
+            && src1->type == GGML_TYPE_F32
+            && dst->type  == GGML_TYPE_F32
+            && ne2 == 1 && ne3 == 1
+            && ggml_is_contiguous(src0)
+            && ggml_is_contiguous(src1)) {
+        const int M = (int)ne01;
+        const int N = (int)ne11;
+        const int K = (int)ne00;
+        if (gfx906_mmf_dispatch(
+                (const half *)src0->data,
+                (const float *)src1->data,
+                (float *)dst->data,
+                M, N, K,
+                (int)ne00, (int)ne10, (int)ne0,
+                ctx.stream())) {
+            return;
+        }
+    }
+#endif // defined(GGML_USE_HIP) && defined(__gfx906__)
+
     ggml_cuda_mul_mat_cublas(ctx, src0, src1, dst);
 }
 

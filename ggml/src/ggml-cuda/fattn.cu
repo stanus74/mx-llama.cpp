@@ -4,6 +4,8 @@
 #include "fattn-tile.cuh"
 #include "fattn-vec.cuh"
 #include "fattn.cuh"
+#include "gfx906/gfx906-config.h"
+#include "gfx906/attention/fattn-q8.cuh"
 
 template <int DKQ, int DV, int ncols2>
 static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
@@ -329,10 +331,11 @@ static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_t
 
 // Best FlashAttention kernel for a specific GPU:
 enum best_fattn_kernel {
-    BEST_FATTN_KERNEL_NONE    =   0,
-    BEST_FATTN_KERNEL_TILE    = 200,
-    BEST_FATTN_KERNEL_VEC     = 100,
-    BEST_FATTN_KERNEL_MMA_F16 = 400,
+    BEST_FATTN_KERNEL_NONE       =   0,
+    BEST_FATTN_KERNEL_TILE       = 200,
+    BEST_FATTN_KERNEL_VEC        = 100,
+    BEST_FATTN_KERNEL_MMA_F16    = 400,
+    BEST_FATTN_KERNEL_GFX906_Q8  = 300,
 };
 
 static bool ggml_cuda_fattn_kv_type_supported(ggml_type type) {
@@ -453,6 +456,25 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         return BEST_FATTN_KERNEL_NONE;
     }
 
+#if defined(GGML_USE_HIP) && defined(__gfx906__)
+    // GFX906 custom Q8_0 flash-attention tile kernel.
+    static const bool gfx906_fattn_q8_disabled = getenv("GGML_CUDA_DISABLE_GFX906_FATTN_Q8") != nullptr;
+    if (GFX906_FATTN_Q8_ENABLED && !gfx906_fattn_q8_disabled
+            && cc == GGML_CUDA_CC_VEGA20
+            && K->type == GGML_TYPE_Q8_0
+            && V->type == GGML_TYPE_Q8_0) {
+        const bool supported_dkq_dv =
+            (K->ne[0] ==  64 && V->ne[0] ==  64) ||
+            (K->ne[0] ==  96 && V->ne[0] ==  96) ||
+            (K->ne[0] == 128 && V->ne[0] == 128) ||
+            (K->ne[0] == 256 && V->ne[0] == 256) ||
+            (K->ne[0] == 576 && V->ne[0] == 512);
+        if (supported_dkq_dv) {
+            return BEST_FATTN_KERNEL_GFX906_Q8;
+        }
+    }
+#endif // defined(GGML_USE_HIP) && defined(__gfx906__)
+
     // For small batch sizes the vector kernel may be preferable over the kernels optimized for large batch sizes:
     // 192 satisfies % 64 == 0 but has no vec instance (DKQ != DV); force it onto the MMA path.
     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && Q->ne[0] != 192 && K->ne[1] % FATTN_KQ_STRIDE == 0;
@@ -557,6 +579,10 @@ size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * d
             need_f16_K = K->type == GGML_TYPE_F32;
             need_f16_V = V->type == GGML_TYPE_F32;
             break;
+        case BEST_FATTN_KERNEL_GFX906_Q8:
+            need_f16_K = false;
+            need_f16_V = false;
+            break;
         case BEST_FATTN_KERNEL_NONE:
             break;
     }
@@ -580,6 +606,9 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
             break;
         case BEST_FATTN_KERNEL_MMA_F16:
             ggml_cuda_flash_attn_ext_mma_f16(ctx, dst);
+            break;
+        case BEST_FATTN_KERNEL_GFX906_Q8:
+            ggml_cuda_flash_attn_ext_tile_q8(ctx, dst);
             break;
     }
 }
