@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.cuh"
+#include "gfx906/quantize/vecdotq.cuh"
 
 #include <cstdint>
 
@@ -312,6 +313,12 @@ static __device__ __forceinline__ float vec_dot_mxfp4_q8_1(
 
     const block_mxfp4 * bq4 = (const block_mxfp4 *) vbq + kbx;
 
+#if defined(GGML_USE_HIP) && defined(__gfx906__) && defined(GFX906_VEC_DOT_MXFP4_ENABLED)
+    int sumi = 0;
+    GFX906_VEC_DOT_MXFP4_Q8_1(bq4, bq8_1, iqs, sumi);
+    const float d = ggml_cuda_e8m0_to_fp32(bq4->e) * 0.5f * __low2float(bq8_1->ds);
+    return d * sumi;
+#else
     const int * q8 = (const int *) bq8_1->qs + iqs;
 
     int sumi = 0;
@@ -326,6 +333,7 @@ static __device__ __forceinline__ float vec_dot_mxfp4_q8_1(
 
     const float d = ggml_cuda_e8m0_to_fp32(bq4->e) * 0.5f * __low2float(bq8_1->ds);
     return d * sumi;
+#endif
 }
 
 #define VDR_NVFP4_Q8_1_MMVQ 4
