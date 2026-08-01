@@ -3,6 +3,7 @@
 #include "common.cuh"
 #include "vecdotq.cuh"
 #include "mma.cuh"
+#include "gfx906/matmul/mmq-helpers.cuh"
 
 #include <climits>
 #include <cstdio>
@@ -549,6 +550,9 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
                 constexpr int mcpy_int = max_cpy / sizeof(int);
                 static_assert(VDR_Q4_0_Q8_1_MMQ == 4, "bad VDR_Q4_0_Q8_1_MMQ");
 
+#if defined(GGML_USE_HIP) && defined(__gfx906__)
+                gfx906_load_q4_quants_vectorized_8(y_qs, j*MMQ_TILE_Y_K + kyqs, j*MMQ_TILE_Y_K + kyqs + QI4_0, u);
+#else
                 int tmp0[4], tmp1[4];
 
                 #pragma unroll
@@ -559,6 +563,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
 
                 u[0]=tmp0[0]; u[2]=tmp0[1]; u[4]=tmp0[2]; u[6]=tmp0[3];
                 u[1]=tmp1[0]; u[3]=tmp1[1]; u[5]=tmp1[2]; u[7]=tmp1[3];
+#endif
 
                 sum[j0/nwarps*mmq_y/warp_size + i0/warp_size] += vec_dot_q4_0_q8_1_impl<VDR_Q4_0_Q8_1_MMQ>
                     (&x_qs[i*(MMQ_TILE_NE_K + 1) + k0/QR4_0], u,
@@ -660,6 +665,9 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_dp4a(
                 constexpr int mcpy_int = max_cpy / sizeof(int);
                 static_assert(VDR_Q4_0_Q8_1_MMQ == 4, "bad VDR_Q4_0_Q8_1_MMQ");
 
+#if defined(GGML_USE_HIP) && defined(__gfx906__)
+                gfx906_load_q4_quants_vectorized_8(y_qs, j*MMQ_TILE_Y_K + kyqs, j*MMQ_TILE_Y_K + kyqs + QI4_1, u);
+#else
                 int tmp0[4], tmp1[4];
 
                 #pragma unroll
@@ -670,6 +678,7 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_dp4a(
 
                 u[0]=tmp0[0]; u[2]=tmp0[1]; u[4]=tmp0[2]; u[6]=tmp0[3];
                 u[1]=tmp1[0]; u[3]=tmp1[1]; u[5]=tmp1[2]; u[7]=tmp1[3];
+#endif
 
                 sum[j0/nwarps*mmq_y/warp_size + i0/warp_size] += vec_dot_q4_1_q8_1_impl<VDR_Q4_1_Q8_1_MMQ>
                     (&x_qs[i*(MMQ_TILE_NE_K + 1) + k0/QR4_1], u,
