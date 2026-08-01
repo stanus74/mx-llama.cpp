@@ -44,12 +44,17 @@
 ## Phase 2: Mittel – MMQ- und vec_dot-Kernel
 
 ### 2.1 `vecdotq.cuh`
-- [ ] `gfx906/quantize/vecdotq.cuh` portieren
-- [ ] Unterstützte Formate: Q4_0, Q4_1, Q8_0, Q8_1, MXFP4
-- [ ] Einklinken in `ggml/src/ggml-cuda/dequantize.cuh` bzw. `vec-dot.cu`
-- [ ] `test-backend-ops test -o MUL_MAT` für betroffene Formate laufen lassen
-- [ ] Risiko: mittel (Korrektheit muss geprüft werden)
-- [ ] Geschätzter Aufwand: 3–5 Tage
+- [x] `gfx906/quantize/vecdotq.cuh` portieren
+- [x] Gemeinsame Infrastruktur anlegen:
+  - [x] `ggml/src/ggml-cuda/gfx906/gfx906-config.h`
+  - [x] `ggml/src/ggml-cuda/gfx906/gfx906-common.cuh`
+- [x] Unterstütztes Format: MXFP4 (via `__builtin_amdgcn_perm` Lookup)
+- [x] Einklinken in `ggml/src/ggml-cuda/vecdotq.cuh` (`vec_dot_mxfp4_q8_1`)
+- [x] `test-backend-ops test -o MUL_MAT -p "type_a=mxfp4"` laufen lassen
+  - Ergebnis: **44/44 tests passed** auf ROCm0/gfx906
+- [x] Regressionstest: 9B Q5_K_M pp512/tg128 unverändert
+- [x] Risiko: mittel (Korrektheit muss geprüft werden)
+- [x] Geschätzter Aufwand: 3–5 Tage
 
 ### 2.2 `mmq.cuh` + `mmq-prefetch.cuh`
 - [ ] Eigener MMQ-Kernelpfad für gfx906 aufbauen
