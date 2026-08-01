@@ -21,7 +21,11 @@ Diese Erweiterungen existieren nur in diesem Fork und müssen bei Upstream-Merge
   `llama-context.cpp`): Meta-Device mit `n_devices()==1`, daher Pipeline-Gates über Modus statt
   `n_devices>1`; Layer→Stage-Mapping braucht `n_layer_all` (Gesamtzahl, nicht `n_layer()`).
 - **GCN-repackte Gewichte** (`repack-gcn.cu`): eigener Matvec/Dequant-Pfad, `ggml_backend_buft_is_cuda_repack`.
-- **Split-Buffer / Tensor-Split** (`ggml_backend_cuda_split_buffer_type*`, `-ts`): `ggml_backend_buft_is_cuda_split`.
+- **`-sm row` (CUDA-Split-Buffer) wird nicht unterstützt.** Upstream hat das Feature bewusst entfernt
+  (`74976e1ae`, "CUDA: remove -sm row, refactor cuBLAS"); der Fork hatte danach nur noch tote
+  Leichen-Registrierung (`ggml_backend_cuda_split_buffer_type*`) ohne funktionierenden Dispatch —
+  Ursache eines GPU-Page-Faults bei `-sm row`. Diese Reste wurden entfernt (siehe MERGE_REPORT.md).
+  Für Multi-GPU **`-sm tensor`** verwenden (Fork-eigenes Feature, siehe oben).
 - **gfx906-Kernel-Tuning** — Hardware-Details & Optimierungsregeln in
   [docs/gfx906-optimization-notes.md](docs/gfx906-optimization-notes.md): Teil A ISA/Kernel
   (kein MFMA, nur `v_dot4/8`/`dot2`; LDS-Bank-Padding; KV-Cache `HSD`; FP32-vs-QDQ; Latency-Hiding),

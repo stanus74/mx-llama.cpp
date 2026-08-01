@@ -8,6 +8,28 @@
 
 Alle expliziten Konflikte wurden manuell aufgelöst (kein `-X ours`/`-X theirs`). **Build und Validation wurden auf dem Server durchgeführt** (siehe Nachtrag 6).
 
+## Nachtrag 7 (Root-Cause `-sm row`-Crash und Entfernung des toten Split-Buffer-Codes)
+
+**Symptom:** `-sm row` crasht auf Multi-GPU sofort mit `Memory access fault by GPU node-1 ... Reason: Unknown` (harter GPU-Seitenfehler, kein OOM), siehe Nachtrag 6.
+
+**Root Cause:** `ggml_cuda_mul_mat()` (der reale Dispatcher für jeden `GGML_OP_MUL_MAT`-Knoten) prüfte `ggml_backend_buft_is_cuda_repack()` für den GCN-Repack-Pfad, aber **nie** `ggml_backend_buft_is_cuda_split()`. Split-Buffer-Tensoren fielen dadurch direkt in die Single-Device-Kernels (mmvf/mmf/mmvq/mmq/cublas), die mit der vollen `ne01`/den vollen Strides statt der Pro-Device-Zeilen-Teilmenge arbeiten → Out-of-Bounds-Zugriff.
+
+Der eigentlich split-fähige Pfad, `ggml_cuda_op_mul_mat()` (mit `get_row_split()`/`get_row_rounding()`), war im gesamten Baum **ohne Aufrufer** — toter Code.
+
+**Historischer Fund:** Upstream hat `-sm row`/Split-Buffer-Support bereits am 2026-07-06 bewusst und vollständig entfernt (`74976e1ae`, "CUDA: remove -sm row, refactor cuBLAS" #24216) — inkl. Entfernung der öffentlichen Deklaration `ggml_backend_cuda_split_buffer_type` aus `ggml-cuda.h` und einem massiven cuBLAS-Dispatch-Refactor (1296 Zeilen in `ggml-cuda.cu`). Dieser Commit ist Ancestor des aktuellen Forks. Der Fork enthielt danach nur noch Leichen-Code: die Split-Buffer-Registrierung (`ggml_backend_cuda_split_buffer_type_context`, `get_row_split`, `ggml_backend_buft_is_cuda_split`, `ggml_cuda_op_mul_mat` und Helfer) wurde offenbar beim 07-12-Merge-Vorfall (Nachtrag 1 im 07-12-Report) fälschlich als "silently gelöschtes Subsystem" interpretiert und aus dem alten Fork-HEAD zurückgeholt — obwohl Upstream sie zu diesem Zeitpunkt bereits bewusst strukturell entfernt hatte. Die Registrierung existierte damit nur als Fassade ohne funktionierenden Dispatch.
+
+**Entscheidung (mit Nutzer abgestimmt):** Das Feature wird nicht neu implementiert (kein funktionierendes Referenz-Design mehr vorhanden, tief verzahnt mit dem neuen cuBLAS-Refactor), sondern der tote Split-Buffer-Code wird vollständig entfernt, konsistent mit der Upstream-Richtung. `-sm tensor` (Fork-eigenes Multi-Stage-Tensor-Parallel) bleibt der unterstützte Multi-GPU-Pfad.
+
+**Entfernt aus `ggml/src/ggml-cuda/ggml-cuda.cu`:**
+- `get_row_rounding()`, `get_row_split()`, `ggml_nbytes_split()`
+- `ggml_backend_cuda_split_buffer_type_context`, `ggml_backend_cuda_split_buffer_context` + zugehörige Buffer-/Buffer-Type-Interface-Funktionen und `ggml_backend_cuda_split_buffer_type()`
+- toter Dispatch-Pfad: `ggml_cuda_op_mul_mat()`, `ggml_cuda_op_mul_mat_cublas()`, `ggml_cuda_Memcpy2DPeerAsync()`, `ggml_cuda_cpy_tensor_2d()`, `gcn_f32_gemm_tn()`, `ggml_cuda_cublas_get_force_compute_type()` (ausschließlich vom toten Pfad genutzt)
+- Split-Checks in `ggml_backend_cuda_device_supports_op()`, `ggml_backend_cuda_device_supports_buft()` und die `"ggml_backend_split_buffer_type"`-Proc-Address-Registrierung
+
+**Auswirkung:** `llama-model.cpp:make_gpu_buft_list()` erkennt nun korrekt, dass CUDA/HIP-Devices `ggml_backend_split_buffer_type` nicht registrieren, und wirft beim Versuch, `-sm row` zu verwenden, sauber `"device %s does not support split buffers"` statt des GPU-Page-Faults — analog zum bereits bestehenden Upstream-Verhalten in `llama-model.cpp` (siehe `74976e1ae`).
+
+**Noch zu tun:** Build (HIP/gfx906) auf dem Server sowie `test-backend-ops -o MUL_MAT` erneut verifizieren, dass GCN-Repack-, Split- und Tensor-Parallel-Pfade nach der Entfernung weiterhin korrekt funktionieren.
+
 ## Konflikt-Übersicht (8 Dateien mit expliziten Konflikten)
 
 | Datei | Art des Konflikts | Entscheidung | Risiko |
