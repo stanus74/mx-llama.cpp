@@ -1,3 +1,90 @@
+# Merge Report: upstream/master → merge-upstream-20260801
+
+**Datum:** 2026-08-01
+**Merge-Branch:** `merge-upstream-20260801`
+**Vorheriger lokaler HEAD:** `c8342b1fe` (letzter Stand von `merge-upstream-20260712`)
+**upstream/master:** `de699957b9`
+**Umfang:** 242 upstream-Commits seit dem letzten Sync, 674 geänderte Dateien.
+
+Alle expliziten Konflikte wurden manuell aufgelöst (kein `-X ours`/`-X theirs`). Kein Build/Test wurde im Rahmen dieses Merges durchgeführt — **vor dem Mergen in `master` sollte mindestens der HIP-Build (gfx906) sowie ein Rauchtest der MTP-/Tensor-Parallel-Pfade erfolgen**.
+
+## Konflikt-Übersicht (8 Dateien mit expliziten Konflikten)
+
+| Datei | Art des Konflikts | Entscheidung | Risiko |
+|---|---|---|---|
+| `AGENTS.md` | rein inhaltlich (deutsche Fork-Doku vs. englische Upstream-Doku) | Fork-Version (`--ours`) behalten | niedrig |
+| `common/common.h` | `tensor_parallel_size` (Fork) vs. `load_mode` (Upstream) | beide Felder behalten | niedrig |
+| `common/common.cpp` | idem, Zuweisung an `llama_model_params` | beide Parameter setzen | niedrig |
+| `ggml/src/ggml-cuda/ggml-cuda.cu` | Include + VRAM-Reset-Logik | beides kombiniert (`tp-allreduce.cuh` + `lightning-indexer.cuh`; Memory-Sharing + DeviceReset) | mittel |
+| `ggml/src/ggml-cuda/mmq.cuh` | **Upstream-MMQ-Refactor vs. Fork-gfx906-Tuning** | **Fork-Version behalten**, upstreams neues `mmq-config-*`/`mmq-load-tiles`/`mmq-vec-dot`/`mmq-instance-q2_0`-Subsystem verworfen | **hoch** |
+| `src/llama-arch.cpp` | fehlende Architekturen in `llama_model_supports_recurrent()` | Upstream-Architekturen `LLM_ARCH_MINIMAX_M2`/`MINIMAX_M3` hinzugefügt | niedrig |
+| `src/llama-model.cpp` | `tensor_parallel_size` (Fork) vs. `load_mode` (Upstream) in Default-Params | beide Parameter setzen | niedrig |
+| `tools/llama-bench/llama-bench.cpp` | `tensor_parallel_size` + altes `use_mmap`/`use_direct_io` (Fork) vs. `load_mode` (Upstream) | komplette Upstream-Version übernommen und `tensor_parallel_size` in alle relevanten Strukturen/Loops/CSV-Ausgaben integriert | mittel |
+
+## Wichtige Entscheidung: MMQ-Subsystem
+
+Upstream hat seit `merge-upstream-20260712` die MMQ-Kernelkonfiguration komplett refactored (Commit `6eddde06a` "CUDA: refactor MMQ kernel configuration") und dabei `mmq.cuh` in `mmq-config-{ampere,blackwell,cdna,pascal,rdna2,rdna3,rdna3-5,rdna4}.cuh`, `mmq-load-tiles.cuh`, `mmq-vec-dot.cuh` sowie `mmq.cu` aufgeteilt. Die neuen Heuristiken werden über `ggml_cuda_mmq_get_nthreads()`/`ggml_cuda_mmq_get_stream_k()` abgefragt.
+
+Der Fork enthält zwei commits, die diese alte Struktur modifizieren:
+- `428dfa08d` — `perf(gfx906): make MMQ nwarps compile-time tunable via macros`
+- `28ecd6584` — `perf(gfx906): raise MMQ OTHER nwarps default 4 -> 8 (+23% pp512 on MI50)`
+
+Da das gfx906-Tuning für diesen Fork essenziell ist und eine Portierung in die neue Config-Struktur nicht im Rahmen dieses Merges erfolgt ist, wurde **bewusst die alte `mmq.cuh`/`mmq.cu` beibehalten** und folgende Dateien des upstream-Refactors entfernt:
+- `ggml/src/ggml-cuda/mmq-config-*.cuh`
+- `ggml/src/ggml-cuda/mmq-load-tiles.cuh`
+- `ggml/src/ggml-cuda/mmq-vec-dot.cuh`
+- `ggml/src/ggml-cuda/template-instances/mmq-instance-q2_0.cu`
+
+**Konsequenzen:**
+- Das gfx906-Tuning bleibt erhalten.
+- Es gehen upstream-Verbesserungen seit dem Refactor verloren, u. a. Q2_0-MMQ-Support, RDNA3.5-spezifisches Tuning, NVFP4-Tightening.
+- Bei einem späteren Sync muss entweder das Tuning in die neue Struktur portiert oder der alte Codepfad beibehalten werden.
+
+## Nachtrag 5 (Build-Fehler auf dem Server, Commit `e048c69a0`)
+
+Erster HIP-Build (gfx906) auf dem Server schlug in `ggml/src/ggml-cuda/mmq.cu` und `ggml/src/ggml-cuda/repack-gcn.cu` fehl:
+- `mmq.cu`: undefinierte Symbole `QK_FP4_MMQ`, `ggml_cuda_mmq_get_J_max`, undefinierte Template-Spezialisierung `mmq_type_traits<..., GGML_TYPE_Q2_0>`, sowie Signatur-Mismatch bei `quantize_mmq_fp4_cuda`.
+- `repack-gcn.cu`: Signatur-Mismatch bei `ggml_cuda_launch_mm_ids_helper`.
+
+**Ursache:** `mmq.cu` wurde von Git **konfliktfrei** auf upstreams Refactor-Version gemergt (Q2_0-Support, neue `ggml_cuda_mmq_get_*`-API, native FP4-Pfade), während `mmq.cuh` bewusst auf der alten Fork-Version blieb. Zusätzlich hatten `mmid.cuh`/`mmid.cu` und `quantize.cuh`/`quantize.cu` sowie `mmf.cu` stillschweigend die neuen Signaturen übernommen, die zur alten `mmq.cu` und zum fork-eigenen `repack-gcn.cu` inkompatibel waren — klassisches Subsystem-Drift-Problem außerhalb der expliziten Konfliktdateien.
+
+**Fix:** Das gesamte betroffene Subsystem auf den alten Fork-Stand (`merge-upstream-20260712`, `c8342b1fe`) zurückgesetzt:
+- `ggml/src/ggml-cuda/mmq.cu`
+- `ggml/src/ggml-cuda/quantize.cu`
+- `ggml/src/ggml-cuda/quantize.cuh`
+- `ggml/src/ggml-cuda/mmid.cu`
+- `ggml/src/ggml-cuda/mmid.cuh`
+- `ggml/src/ggml-cuda/mmf.cu`
+
+**Verifikation nach dem Fix:**
+- Grep über den gesamten Baum nach `ggml_cuda_mmq_get_*`, `QK_FP4_MMQ`, `mmq_config`, `mmq_load_tiles`, `mmq_vec_dot`: keine Treffer mehr.
+- `block_fp4_mmq` existiert nur noch in der alten `mmq.cuh`/`mmq.cu` mit der ursprünglichen Semantik.
+- `ggml_cuda_launch_mm_ids_helper` hat wieder die alte 11-Parameter-Signatur; alle Aufrufer (`mmq.cu`, `mmf.cu`, `repack-gcn.cu`) passen dazu.
+
+**Lehre:** Ein Subsystem-Refactor, der sich über mehrere Dateien erstreckt, darf nicht halb zurückgerollt werden. Sobald entschieden ist, die alte Fork-Version einer Kern-Datei zu behalten, müssen **alle** Dateien, die in upstreams Refactor involviert waren und davon abhängen, konsistent auf den gleichen Stand gebracht werden. Empfehlung für künftige Syncs: vor dem Build ein `git diff --name-only` der betroffenen Dateien gegen den alten HEAD ziehen und explizit klären, welche zurückgesetzt und welche angepasst werden.
+
+## Symbol-/Rename-Check
+
+Nach den Erfahrungen aus dem vorherigen Merge wurden folgende Checks durchgeführt:
+- Verbleibende `t_h_pre_norm`/`embeddings_pre_norm` etc.: nur noch in den Fork-eigenen `pre_norm_accum`-APIs (`llama_context::{set,get}_embeddings_pre_norm_accum`), was korrekt ist.
+- `n_layer` vs. `n_layer_all`: fork-exklusive Stellen verwenden weiterhin `n_layer_all` für die Gesamt-Layer-Anzahl.
+- `ggml_backend_buft_is_cuda_split` / `ggml_backend_buft_is_cuda_repack`: weiterhin definiert und verwendet.
+- Neue MMQ-API `ggml_cuda_mmq_get_*`: keine Verbrauchsstellen mehr im Baum (entfernte Dateien waren die einzigen Nutzer).
+
+## CI / Workflows
+
+Upstream hat `.github/workflows/build-wasm.yml` neu hinzugefügt. Gemäß [AGENTS.md](AGENTS.md) wurde sie als `.github/workflows/build-wasm.yml.disabled` deaktiviert; alle anderen aktiven Fork-Workflows (`build-self-hosted`, `server-self-hosted`, etc.) blieben erhalten.
+
+## Offene Punkte / Empfehlungen vor Merge in `master`
+
+1. **Build:** HIP-Build (gfx906) durchführen. Aufgrund der Entscheidung, die alte MMQ-Struktur zu behalten, kann es an unerwarteten Stellen zu Kompilierfehlern kommen, falls andere upstream-Dateien implizit die neue MMQ-API erwarten.
+2. **MMQ-Verifikation:** `test-backend-ops -o MUL_MAT` für relevante Q-Formate auf gfx906 laufen lassen, um sicherzustellen, dass das Tuning noch wirksam ist und keine Regressionen auftreten.
+3. **MTP-/Tensor-Parallel-Rauchtest:** Da `common/speculative.cpp`, `src/llama-context.cpp`, `src/models/qwen35*.cpp` und `ggml-cuda.cu` allesamt upstream-Änderungen in Fork-Feature-Bereichen erhalten haben, sollten MTP-Drafting und Multi-Stage-TP funktional geprüft werden.
+4. **Q2_0-Verlust dokumentieren:** Falls Q2_0-Unterstützung relevant ist, muss diese separat wieder eingebracht werden — sie ging mit der Verwerfung des upstream-MMQ-Refactors verloren.
+5. Kein automatisierter Test wurde in dieser Session ausgeführt (auf Nutzerwunsch) — die obigen Punkte sind manuell nachzuholen.
+
+---
+
 # Merge Report: upstream/master → merge-upstream-20260712
 
 **Datum:** 2026-07-12
