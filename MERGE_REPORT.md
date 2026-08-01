@@ -94,7 +94,25 @@ Upstream erzwingt für `SPLIT_MODE_TENSOR` ab diesem Stand Flash Attention. Nach
 
 Ergebnis: Multi-Stage Tensor-Parallel funktioniert nach dem Merge; gegenüber Single-GPU **+68 % pp** und **+26 % tg** beim 9B-Modell. Auch das 27B Q6_K-Modell läuft stabil im TP-Modus.
 
-**Lehre:** `SPLIT_MODE_TENSOR` benötigt jetzt explizit `-fa 1`. In zukünftigen Benchmarks und Dokumentation muss diese Flag mitgeführt werden; `-fa 0` ist für Tensor-Parallel nicht mehr zulässig.
+**Wichtiger Hinweis zu `-sm row` (Row-Split / Layer-Split):** Der Row-Split-Pfad ist nach diesem Merge defekt. Tests mit verschiedenen Modellen (9B Q5_K_M, 27B Qwopus3.6 Q6_K) enden sofort mit:
+
+```
+Memory access fault by GPU node-1 (Agent handle: ...) on address ... Reason: Unknown.
+```
+
+Dies ist ein harter GPU-Seitenfehler, kein OOM. Vermutlich ist das `ggml_backend_cuda_split_buffer`-Subsystem (welches wir im vorherigen Merge noch repariert hatten) durch diesen upstream-Sync erneut inkonsistent geworden. Für Multi-GPU muss aktuell **`-sm tensor`** verwendet werden.
+
+**Update: Ornith-35B Heretic mit `-sm tensor` im Server-Modus.** Im Gegensatz zum initialen `llama-bench`-Absturz läuft `Ornith-1.0-35B-Heretic-MTP-APEX-I-Balanced.gguf` im `llama-server` mit Tensor-Parallel stabil:
+
+| Metrik | Wert |
+|---|---:|
+| Prompt-Verarbeitung | 70.453 Token @ **865 t/s** |
+| Token-Generierung | **48–55 t/s** |
+| Kontext | 131072 erfolgreich |
+
+Die Warnung `model has unused tensor blk.40.* ... ignoring` zeigt, dass die Nextn/MTP-Layer 40 nicht verwendet werden — das Modell läuft also im normalen Modus ohne MTP-Drafting.
+
+**Lehre:** `SPLIT_MODE_TENSOR` benötigt in `llama-bench` und bei einigen Konfigurationen explizit `-fa 1`. Der Server-Modus scheint Flash Attention anders zu handhaben; für robusten Betrieb sollte `-fa 1` dennoch gesetzt werden.
 
 **MMQ-Korrektheit (`test-backend-ops`):**
 
@@ -127,7 +145,8 @@ Upstream hat `.github/workflows/build-wasm.yml` neu hinzugefügt. Gemäß [AGENT
 2. ~~**MMQ-Verifikation:**~~ ✅ Erledigt — `test-backend-ops test -o MUL_MAT` für `q4_0/q4_1/q5_0/q5_1/q8_0/q2_K/q3_K/q4_K/q5_K/q6_K`: 249/249 Tests bestanden.
 3. ~~**MTP-/Tensor-Parallel-Rauchtest:**~~ ✅ Erledigt — TP mit `-fa 1` validiert (siehe Nachtrag 6). MTP wurde im Benchmark-Kontext bereits mit 35B.A3B Q5_K_M (+20 % pp) getestet.
 4. **Q2_0-Verlust dokumentieren:** Falls Q2_0-Unterstützung relevant ist, muss diese separat wieder eingebracht werden — sie ging mit der Verwerfung des upstream-MMQ-Refactors verloren.
-5. Keine weiteren blockierenden Punkte aus dieser Session. Empfohlener nächster Schritt: Code-Review & Merge von `merge-upstream-20260801` in `master` (nur auf expliziten Aufruf).
+5. **Row-Split (`-sm row`) reparieren:** Der Pfad crasht auf Multi-GPU mit einem GPU-Seitenfehler. Workaround: `-sm tensor -tps 2 -fa 1` verwenden.
+6. Keine weiteren blockierenden Punkte aus dieser Session. Empfohlener nächster Schritt: Code-Review & Merge von `merge-upstream-20260801` in `master` (nur auf expliziten Aufruf).
 
 ---
 
