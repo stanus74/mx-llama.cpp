@@ -96,6 +96,19 @@ Ergebnis: Multi-Stage Tensor-Parallel funktioniert nach dem Merge; gegenüber Si
 
 **Lehre:** `SPLIT_MODE_TENSOR` benötigt jetzt explizit `-fa 1`. In zukünftigen Benchmarks und Dokumentation muss diese Flag mitgeführt werden; `-fa 0` ist für Tensor-Parallel nicht mehr zulässig.
 
+**MMQ-Korrektheit (`test-backend-ops`):**
+
+```bash
+./build/bin/test-backend-ops test -o MUL_MAT \
+  -p 'type_a=q(4_0|4_1|5_0|5_1|8_0|2_K|3_K|4_K|5_K|6_K)'
+```
+
+Ergebnis: **249/249 Tests passed** für die relevanten Q-Formate auf ROCm0/gfx906. Die MMQ-Pfade (inklusive `GGML_MMQ_NWARPS_GFX906_*`-Tuning) liefern weiterhin korrekte Ergebnisse.
+
+**Hinweise:**
+- `q1_0` löst in `hipblasGemmEx` einen `CUBLAS_STATUS_INTERNAL_ERROR` aus — das ist ein hipBLAS/ROCm-Problem, keine MMQ-Regression.
+- `q2_0` wurde ausgeschlossen, weil der Q2_0-MMQ-Pfad mit dem verworfenen upstream-MMQ-Refactor verloren ging (siehe Abschnitt "MMQ-Subsystem").
+
 ## Symbol-/Rename-Check
 
 Nach den Erfahrungen aus dem vorherigen Merge wurden folgende Checks durchgeführt:
@@ -111,7 +124,7 @@ Upstream hat `.github/workflows/build-wasm.yml` neu hinzugefügt. Gemäß [AGENT
 ## Offene Punkte / Empfehlungen vor Merge in `master`
 
 1. ~~**Build:** HIP-Build (gfx906) durchführen.~~ ✅ Erledigt (657/657 Ziele).
-2. **MMQ-Verifikation:** `test-backend-ops -o MUL_MAT` für relevante Q-Formate auf gfx906 laufen lassen, um sicherzustellen, dass das Tuning noch wirksam ist und keine Regressionen auftreten.
+2. ~~**MMQ-Verifikation:**~~ ✅ Erledigt — `test-backend-ops test -o MUL_MAT` für `q4_0/q4_1/q5_0/q5_1/q8_0/q2_K/q3_K/q4_K/q5_K/q6_K`: 249/249 Tests bestanden.
 3. ~~**MTP-/Tensor-Parallel-Rauchtest:**~~ ✅ Erledigt — TP mit `-fa 1` validiert (siehe Nachtrag 6). MTP wurde im Benchmark-Kontext bereits mit 35B.A3B Q5_K_M (+20 % pp) getestet.
 4. **Q2_0-Verlust dokumentieren:** Falls Q2_0-Unterstützung relevant ist, muss diese separat wieder eingebracht werden — sie ging mit der Verwerfung des upstream-MMQ-Refactors verloren.
 5. Keine weiteren blockierenden Punkte aus dieser Session. Empfohlener nächster Schritt: Code-Review & Merge von `merge-upstream-20260801` in `master` (nur auf expliziten Aufruf).
