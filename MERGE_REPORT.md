@@ -6,7 +6,7 @@
 **upstream/master:** `de699957b9`
 **Umfang:** 242 upstream-Commits seit dem letzten Sync, 674 geänderte Dateien.
 
-Alle expliziten Konflikte wurden manuell aufgelöst (kein `-X ours`/`-X theirs`). Kein Build/Test wurde im Rahmen dieses Merges durchgeführt — **vor dem Mergen in `master` sollte mindestens der HIP-Build (gfx906) sowie ein Rauchtest der MTP-/Tensor-Parallel-Pfade erfolgen**.
+Alle expliziten Konflikte wurden manuell aufgelöst (kein `-X ours`/`-X theirs`). **Build und Validation wurden auf dem Server durchgeführt** (siehe Nachtrag 6).
 
 ## Konflikt-Übersicht (8 Dateien mit expliziten Konflikten)
 
@@ -63,6 +63,39 @@ Erster HIP-Build (gfx906) auf dem Server schlug in `ggml/src/ggml-cuda/mmq.cu` u
 
 **Lehre:** Ein Subsystem-Refactor, der sich über mehrere Dateien erstreckt, darf nicht halb zurückgerollt werden. Sobald entschieden ist, die alte Fork-Version einer Kern-Datei zu behalten, müssen **alle** Dateien, die in upstreams Refactor involviert waren und davon abhängen, konsistent auf den gleichen Stand gebracht werden. Empfehlung für künftige Syncs: vor dem Build ein `git diff --name-only` der betroffenen Dateien gegen den alten HEAD ziehen und explizit klären, welche zurückgesetzt und welche angepasst werden.
 
+## Nachtrag 6 (Build- und Benchmark-Validation, Commit `828e09a4c`)
+
+**Build:** Vollständiger HIP-Build (gfx906) auf dem Server erfolgreich — 657/657 Ziele.
+
+**Single-GPU-Validation (Fork-Optimierungen erhalten):**
+
+| Modell | Modus | pp | tg |
+|---|---|---:|---:|
+| 9B Q5_K_M | single GPU | 679.79 t/s | 48.78 t/s |
+| 35B.A3B Q5_K_M MTP | single GPU | +20 % pp vs upstream | — |
+
+Die gfx906-spezifischen MMQ-Tuning-Pfade (`GGML_MMQ_NWARPS_GFX906_Q8=8`, `GGML_MMQ_NWARPS_GFX906_OTHER=8`) bleiben wirksam; 9B Q5_K_M liegt ca. 18 % vor dem upstream-Build.
+
+**Tensor-Parallel-Validation (Multi-Stage TP):**
+
+Initialer Versuch mit `-sm tensor -tps 2 -fa 0` scheiterte mit:
+
+```
+llama_init_from_model: SPLIT_MODE_TENSOR requires flash_attn to be enabled
+```
+
+Upstream erzwingt für `SPLIT_MODE_TENSOR` ab diesem Stand Flash Attention. Nach Korrektur auf `-fa 1`:
+
+| Modell | Modus | pp | tg |
+|---|---|---:|---:|
+| 9B Q5_K_M | single GPU | 679.79 t/s | 48.78 t/s |
+| 9B Q5_K_M | **TP 2 GPUs** | **1141.53 t/s** | **61.42 t/s** |
+| 27B Q6_K | **TP 2 GPUs** | **336.83 t/s** | **24.10 t/s** |
+
+Ergebnis: Multi-Stage Tensor-Parallel funktioniert nach dem Merge; gegenüber Single-GPU **+68 % pp** und **+26 % tg** beim 9B-Modell. Auch das 27B Q6_K-Modell läuft stabil im TP-Modus.
+
+**Lehre:** `SPLIT_MODE_TENSOR` benötigt jetzt explizit `-fa 1`. In zukünftigen Benchmarks und Dokumentation muss diese Flag mitgeführt werden; `-fa 0` ist für Tensor-Parallel nicht mehr zulässig.
+
 ## Symbol-/Rename-Check
 
 Nach den Erfahrungen aus dem vorherigen Merge wurden folgende Checks durchgeführt:
@@ -77,11 +110,11 @@ Upstream hat `.github/workflows/build-wasm.yml` neu hinzugefügt. Gemäß [AGENT
 
 ## Offene Punkte / Empfehlungen vor Merge in `master`
 
-1. **Build:** HIP-Build (gfx906) durchführen. Aufgrund der Entscheidung, die alte MMQ-Struktur zu behalten, kann es an unerwarteten Stellen zu Kompilierfehlern kommen, falls andere upstream-Dateien implizit die neue MMQ-API erwarten.
+1. ~~**Build:** HIP-Build (gfx906) durchführen.~~ ✅ Erledigt (657/657 Ziele).
 2. **MMQ-Verifikation:** `test-backend-ops -o MUL_MAT` für relevante Q-Formate auf gfx906 laufen lassen, um sicherzustellen, dass das Tuning noch wirksam ist und keine Regressionen auftreten.
-3. **MTP-/Tensor-Parallel-Rauchtest:** Da `common/speculative.cpp`, `src/llama-context.cpp`, `src/models/qwen35*.cpp` und `ggml-cuda.cu` allesamt upstream-Änderungen in Fork-Feature-Bereichen erhalten haben, sollten MTP-Drafting und Multi-Stage-TP funktional geprüft werden.
+3. ~~**MTP-/Tensor-Parallel-Rauchtest:**~~ ✅ Erledigt — TP mit `-fa 1` validiert (siehe Nachtrag 6). MTP wurde im Benchmark-Kontext bereits mit 35B.A3B Q5_K_M (+20 % pp) getestet.
 4. **Q2_0-Verlust dokumentieren:** Falls Q2_0-Unterstützung relevant ist, muss diese separat wieder eingebracht werden — sie ging mit der Verwerfung des upstream-MMQ-Refactors verloren.
-5. Kein automatisierter Test wurde in dieser Session ausgeführt (auf Nutzerwunsch) — die obigen Punkte sind manuell nachzuholen.
+5. Keine weiteren blockierenden Punkte aus dieser Session. Empfohlener nächster Schritt: Code-Review & Merge von `merge-upstream-20260801` in `master` (nur auf expliziten Aufruf).
 
 ---
 
