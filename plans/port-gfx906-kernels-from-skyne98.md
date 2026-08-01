@@ -23,12 +23,15 @@
 ## Phase 1: Einfach – Grundlagen & niedriges Risiko
 
 ### 1.1 RoPE-Optimierung
-- [ ] `gfx906/attention/rope.cuh` portieren
-- [ ] In `ggml/src/ggml-cuda/rope.cu` (oder Nachfolger) einklinken
-- [ ] Verwendung von `__sincosf()` statt getrenntem `sinf()`/`cosf()` testen
-- [ ] Benchmark: 9B Q5_K_M, pp512/tg128 vorher/nachher vergleichen
-- [ ] Risiko: niedrig
-- [ ] Geschätzter Aufwand: 1–2 Tage
+- [x] `gfx906/attention/rope.cuh` portieren
+- [x] In `ggml/src/ggml-cuda/rope.cu` (oder Nachfolger) einklinken
+- [x] Verwendung von `__sincosf()` statt getrenntem `sinf()`/`cosf()` testen
+- [x] Benchmark: 9B Q5_K_M, pp512/tg128 vorher/nachher vergleichen
+  - Vorher: pp512 679.79 t/s, tg128 48.78 t/s
+  - Nachher: pp512 675.37 t/s, tg128 50.08 t/s
+  - Hinweis: RoPE-Anteil gering, daher marginaler Unterschied
+- [x] Risiko: niedrig
+- [x] Geschätzter Aufwand: 1–2 Tage
 
 ### 1.2 Epilog für Quantisierung
 - [ ] `gfx906/quantize/epilogue.cuh` portieren
