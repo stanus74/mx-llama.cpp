@@ -33,8 +33,11 @@ static __device__ void rope_yarn(
         // Get n-d magnitude scaling corrected for interpolation
         mscale *= 1.0f + 0.1f * logf(1.0f / freq_scale);
     }
-    cos_theta = cosf(theta) * mscale;
-    sin_theta = sinf(theta) * mscale;
+    // Use __sincosf() to compute both sin and cosine in a single instruction.
+    // This is beneficial on gfx906 where separate sinf/cosf calls are more expensive.
+    __sincosf(theta, &sin_theta, &cos_theta);
+    cos_theta *= mscale;
+    sin_theta *= mscale;
     if (!forward) {
         sin_theta *= -1.0f;
     }
