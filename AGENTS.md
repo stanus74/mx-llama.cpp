@@ -26,6 +26,15 @@ Diese Erweiterungen existieren nur in diesem Fork und müssen bei Upstream-Merge
   Leichen-Registrierung (`ggml_backend_cuda_split_buffer_type*`) ohne funktionierenden Dispatch —
   Ursache eines GPU-Page-Faults bei `-sm row`. Diese Reste wurden entfernt (siehe MERGE_REPORT.md).
   Für Multi-GPU **`-sm tensor`** verwenden (Fork-eigenes Feature, siehe oben).
+- **`-sm tensor` + MTP crasht bei asymmetrischem VRAM (real reproduziert, siehe
+  [docs/anleitung-opti-gfx906.md](docs/anleitung-opti-gfx906.md) Abschnitt 5.1):** TP erzwingt
+  CPU-Sampler-Fallback für den MTP-Draft (`backend sampling not supported with
+  SPLIT_MODE_TENSOR`), zusätzlicher Speicherdruck sprengt die kleinere Karte (`ROCm error: out
+  of memory`). Konsequenz: **MTP-Modelle → Layer-Split, nicht TP.** TP nur für reine
+  PP-lastige Workloads ohne Speculative Decoding. Da `-sm row` (Layer-/Row-Split via CUDA-Split-
+  Buffer) oben als nicht unterstützt entfernt wurde, hat dieser Fork aktuell **keinen** GPU-Row-
+  Split-Pfad, der gleichzeitig MTP-tauglich ist — nur Layer-Split ohne echtes Row-Split innerhalb
+  eines Layers.
 - **gfx906-Kernel-Tuning** — Hardware-Details & Optimierungsregeln in
   [docs/gfx906-optimization-notes.md](docs/gfx906-optimization-notes.md): Teil A ISA/Kernel
   (kein MFMA, nur `v_dot4/8`/`dot2`; LDS-Bank-Padding; KV-Cache `HSD`; FP32-vs-QDQ; Latency-Hiding),
