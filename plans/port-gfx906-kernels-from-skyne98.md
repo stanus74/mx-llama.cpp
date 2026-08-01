@@ -56,16 +56,17 @@
 - [x] Risiko: mittel (Korrektheit muss geprüft werden)
 - [x] Geschätzter Aufwand: 3–5 Tage
 
-### 2.2 `mmq.cuh` + `mmq-prefetch.cuh`
-- [ ] Eigener MMQ-Kernelpfad für gfx906 aufbauen
-- [ ] Parameter aus `gfx906-config.h` verwenden
-- [ ] Unterstützte Formate: Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q4_K, Q5_K, Q6_K, Q2_K, Q3_K
-- [ ] Routing in `ggml_cuda_mul_mat`/`ggml_cuda_mul_mat_id` anpassen
-- [ ] Fallback auf bestehende MMQ bei Nicht-gfx906 beibehalten
-- [ ] Benchmarks: 9B Q5_K_M, 27B Q6_K, 35B Heretic
-- [ ] `test-backend-ops` für alle genannten Formate
-- [ ] Risiko: mittel-hoch (zentraler Pfad)
-- [ ] Geschätzter Aufwand: 1–2 Wochen
+### 2.2 `mmq.cuh` + `mmq-prefetch.cuh` (chirurgisch)
+- [x] `gfx906/matmul/mmq-helpers.cuh` mit vektorisierten Lade-Pfaden anlegen
+- [x] Q4_0/Q4_1 y-Tile-Ladung in `vec_dot_q4_0_q8_1_dp4a`/`vec_dot_q4_1_q8_1_dp4a` auf `__gfx906__` vektorisieren
+  - Verwendet `int4`-Loads (global_load_dwordx4) statt skalarer `ggml_cuda_memcpy_1`
+  - Automatischer Fallback bei nicht aligned Adressen
+- [x] `test-backend-ops test -o MUL_MAT -p "type_a=q(4_0|4_1)"`
+  - Ergebnis: **91/91 tests passed**
+- [x] Regressionstest: 9B Q5_K_M unverändert (Modell nutzt kein Q4_0/Q4_1)
+- [x] Risiko: mittel-hoch (zentraler Pfad)
+- [x] Geschätzter Aufwand: 1–2 Wochen
+- [ ] **Verworfen:** Kompletter Ersatz von `mmq.cuh` durch skyne98s Version, da zu stark an dessen neues MMQ-Subsystem gekoppelt
 
 ### 2.3 MMVQ-Kernel (Matrix-Vektor)
 - [ ] `gfx906/matmul/mmvq-q4_0.cuh` portieren
