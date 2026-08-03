@@ -1,3 +1,5 @@
+https://arkprojects.space/wiki/AMD_GFX906/pcie-lnk-speed
+
 Perf vs PCIe speed
 software: llama.cpp (b9119-rocm-7.2.1)
 mobo: imb760

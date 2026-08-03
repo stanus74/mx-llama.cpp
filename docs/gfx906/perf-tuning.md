@@ -1,3 +1,5 @@
+https://arkprojects.space/wiki/AMD_GFX906/perf-tuning
+
 Perf tuning
 Force PCIe speed
 curl -L https://github.com/corundum/corundum/raw/refs/heads/master/fpga/lib/pcie/scripts/pcie_set_speed.sh > pcie_set_speed.sh
