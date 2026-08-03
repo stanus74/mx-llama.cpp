@@ -328,10 +328,15 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 // The integer division truncates and the array is one element short, so every thread writes
 // past its end. This is shape-dependent (only tiles that select mmq_x=8 trigger it), which is
 // exactly why test-backend-ops -o MUL_MAT passes 2/2 at nwarps=16 -- the gate never hits that
-// combination. It also means OTHER=16 is not merely slow but equally unsafe; the earlier Q5_K
+// combination. It also meant OTHER=16 was not merely slow but equally unsafe; the earlier Q5_K
 // sweep simply never selected an mmq_x=8 tile.
-// DO NOT set either knob above 8 unless the accumulator sizing is fixed first. Discussion
-// #23881 suggests 16 helps Q8 on MI60 -- that does NOT transfer to this fork on MI50.
+//
+// FIXED 2026-08-03: both accumulators (mul_mat_q and mul_mat_q_stream_k_fixup) now round the
+// j0 dimension up instead of truncating. For every configuration where nwarps divides mmq_x --
+// i.e. all shipped defaults -- the size is unchanged, so this is a no-op there. Values above 8
+// are therefore testable again; whether they are FASTER is a separate question (OTHER=16
+// regressed to 497 t/s on Q5_K, an occupancy cliff unrelated to this bug). Discussion #23881
+// suggests 16 helps Q8 on MI60 -- re-sweep before changing any default.
 #ifndef GGML_MMQ_NWARPS_GFX906_Q8
 #define GGML_MMQ_NWARPS_GFX906_Q8    8
 #endif
@@ -3575,7 +3580,12 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int ITER_K          = get_iter_k(type);
     constexpr int blocks_per_iter = ITER_K / qk;
 
-    float sum[mmq_x*mmq_y / (nwarps*warp_size)] = {0.0f};
+    // The j0 loop below runs ceil(mmq_x/nwarps) times, the i0 loop mmq_y/warp_size times, and
+    // sum is indexed as sum[j0/nwarps * mmq_y/warp_size + i0/warp_size]. Writing the size as
+    // mmq_x*mmq_y/(nwarps*warp_size) truncates and is one element short whenever nwarps does
+    // not divide mmq_x -- in particular for nwarps > mmq_x, which is reachable on gfx906 where
+    // the dispatcher tries tiles from mmq_x=8 upwards. Round up instead.
+    float sum[((mmq_x + nwarps - 1)/nwarps) * (mmq_y/warp_size)] = {0.0f};
 
     constexpr int sz = sizeof(block_q8_1_mmq) / sizeof(int);
 
@@ -3898,7 +3908,10 @@ static __global__ void mul_mat_q_stream_k_fixup(
     constexpr int nwarps = mmq_get_nwarps_device_type<type>()/2;
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
 
-    float sum[mmq_x / nwarps] = {0.0f};
+    // Same truncation issue as in mul_mat_q: the j0 loops below run ceil(mmq_x/nwarps) times
+    // and index sum[j0/nwarps]. mmq_x/nwarps would also yield a zero-sized array for
+    // nwarps > mmq_x.
+    float sum[(mmq_x + nwarps - 1)/nwarps] = {0.0f};
     const int i = blockIdx.y*warp_size + threadIdx.x;
 
     const int nty = (nrows_x + mmq_y - 1) / mmq_y;
