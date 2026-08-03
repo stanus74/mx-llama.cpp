@@ -398,11 +398,22 @@ hilft nicht, da eine explizite Draft-Datei laut `common/arg.cpp:549` die Sidecar
 abschaltet, über die der MTP-Typ sonst gesetzt würde. Der MTP-Kopf steckt bei diesen Modellen
 im GGUF selbst, ein separates Draft-Modell ist weder nötig noch ausreichend.
 
-## Offen / nachzuholen
+### 3. TP-Rauchtest ✅ (2026-08-03)
 
-3. **TP-Rauchtest** (`-sm tensor -tps 2`), da `llama-context.cpp` erneut berührt wurde.
-   Beachten: laut AGENTS.md crasht `-sm tensor` + MTP bei asymmetrischem VRAM (16/32 GB) —
-   TP daher ohne MTP-Modell prüfen.
+`HIP_VISIBLE_DEVICES=0,1 llama-cli -m Ornith-1.0-9B-Q8_0.gguf -ngl 99 -fa 1 -sm tensor -tps 2
+--no-mmap -dio -no-cnv -st -s 42 -n 128`, Build `b10291-5f0d947da`:
+
+- Startet sauber über beide Karten, kohärente Ausgabe, kein Crash, kein OOM.
+- Damit ist der Multi-Stage-TP-Pfad nach der erneuten Änderung an `llama-context.cpp` intakt.
+- Bewusst mit einem **Nicht-MTP-Modell** geprüft: `-sm tensor` + MTP crasht laut AGENTS.md bei
+  asymmetrischem VRAM (16/32 GB) — das wäre der bekannte Fehler gewesen, nicht der Merge.
+- Durchsatz (Prompt 146,2 / Generation 57,5 t/s) ist ein Funktionsnachweis, **keine
+  Performance-Aussage**: kurzer Prompt via `llama-cli`, nicht vergleichbar mit
+  `llama-bench`-pp512-Zahlen.
+
+**Fazit: Merge vollständig verifiziert** — Build, MTP und TP.
+
+## Offen / nachzuholen
 4. Mittelfristig bewerten, wie eng die Fork-Schicht an die Upstream-Basis gekoppelt bleiben
    soll: upstream erweitert die Basis aktiv um neue Modelle, was bei jedem Sync erneut
    dieselbe Semantik-Prüfung erzwingt.
