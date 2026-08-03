@@ -121,9 +121,14 @@ und taugt nicht als alleinige Absicherung — dasselbe Muster wie beim `-sm row`
 sind zu kurz zum Heat-Soak. Phase 0 war für diesen Sweep also nicht blockierend, bleibt es aber
 für längere pp4096/pp32768-Läufe.
 
-### B.2 `nwarps=16`-Crash — ✅ URSACHE GEFUNDEN 2026-08-03
+### B.2 `nwarps=16`-Crash — ⚠️ URSACHE WEITERHIN OFFEN
 
-**Root Cause:** Akkumulator-Unterdimensionierung in [../ggml/src/ggml-cuda/mmq.cuh](../ggml/src/ggml-cuda/mmq.cuh#L3568):
+> **Korrektur 2026-08-03:** Der unten beschriebene Akkumulator-Bug wurde zunächst als Root Cause
+> deklariert und behoben (Commit `4e8441f69`). **Mit dem Fix crasht `nwarps=16` unverändert
+> weiter** (Re-Sweep auf Ornith-1.0-9B-Q8_0, identischer Fault). Der Bug ist real und der Fix
+> korrekt, war aber nicht die Ursache. Die eigentliche Ursache ist unbekannt.
+
+**Gefundener und behobener Bug** (nicht die Crash-Ursache) in [../ggml/src/ggml-cuda/mmq.cuh](../ggml/src/ggml-cuda/mmq.cuh#L3568):
 
 ```c
 float sum[mmq_x*mmq_y / (nwarps*warp_size)];
@@ -150,13 +155,24 @@ darüber hinaus → `Memory access fault … Write access to a read-only page`.
 3. **Kein Fork-Bug** — die Formel stammt aus Upstream und fällt dort nicht auf, weil
    `256/warp_size` auf keiner unterstützten Karte `nwarps > mmq_x_min` ergibt.
 
-**Offen (optional, nur falls nwarps > 8 je interessant wird):**
+**Bereits ausgeschlossen:**
 
-- [ ] Fix: Array-Größe auf `max(1, mmq_x/nwarps) * (mmq_y/warp_size)` aufrunden, oder
-      `mmq_x`-Kandidaten unterhalb `nwarps` im Dispatcher überspringen
-- [ ] `static_assert(mmq_x >= nwarps)` als Schranke, damit der Fall nicht still durchrutscht
-- [ ] MUL_MAT-Gate um Shapes ergänzen, die eine `mmq_x=8`-Kachel erzwingen
-- [ ] Upstream-Meldung erwägen (latenter Bug, dort nur nicht erreichbar)
+- Akkumulator-Trunkierung (Fix `4e8441f69` — Crash bleibt)
+- Blockgröße an sich: `OTHER=16` startet ebenfalls 1024 Threads und faultet **nicht**
+- Knopf-Mismatch `Q8` ≠ `OTHER`: der q8_0-Pfad ist über
+  `mmq_type_traits<…, GGML_TYPE_Q8_0>::nwarps` durchgängig konsistent parametrisiert
+
+**Nächste Schritte:**
+
+- [ ] `AMD_LOG_LEVEL=3` oder `rocgdb`, um den faultenden Kernel zu identifizieren —
+      ohne diese Information ist weiteres Hypothesenbilden Zeitverschwendung
+      (bisher drei Hypothesen, drei Fehlschläge)
+- [ ] Shared-Memory-Berechnung gegen `smpbo` prüfen: greift der `mmq_x`-Filter in
+      [../ggml/src/ggml-cuda/mmq.cuh](../ggml/src/ggml-cuda/mmq.cuh#L4196) bei nwarps=16
+      so, dass `mmq_x_best = 0` bleibt und der `switch` keinen Case trifft?
+- [ ] `static_assert` bzw. harte Schranke gegen nwarps > 8, damit der Fall nicht still
+      durchrutscht — unabhängig von der Ursache sinnvoll
+- [ ] MUL_MAT-Gate um Shapes ergänzen, die den Fall abdecken (Gate ist hier blind)
 
 - [x] **Q8_0-Modell vorhanden:** `/home/pat/data/models/Ornith-1.0-9B-Q8_0.gguf` (9,5 GB, nativ
       quantisiert, seit 2026-08-03 auf dem Server). Passt einzeln auf eine 32-GB-Karte →

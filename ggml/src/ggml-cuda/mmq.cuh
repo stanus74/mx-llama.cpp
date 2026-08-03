@@ -318,7 +318,8 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 //   8  -> 733.96 +/- 7.37 t/s   gate 2/2   (+28.3%, current default)
 //   16 -> CRASHES: "Memory access fault ... Write access to a read-only page" in llama-bench.
 //
-// ROOT CAUSE of the nwarps=16 crash (found 2026-08-03): the accumulator below,
+// A REAL BUG found while investigating the nwarps=16 crash (2026-08-03) -- but NOT its cause,
+// see the note at the end. The accumulator below,
 //     float sum[mmq_x*mmq_y / (nwarps*warp_size)];
 // is indexed as sum[j0/nwarps * mmq_y/warp_size + i0/warp_size], which implicitly assumes
 // mmq_x >= nwarps. On gfx906 (mmq_y=128, warp_size=64) mmq_y/warp_size = 2, and the dispatcher
@@ -331,12 +332,21 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 // combination. It also meant OTHER=16 was not merely slow but equally unsafe; the earlier Q5_K
 // sweep simply never selected an mmq_x=8 tile.
 //
-// FIXED 2026-08-03: both accumulators (mul_mat_q and mul_mat_q_stream_k_fixup) now round the
-// j0 dimension up instead of truncating. For every configuration where nwarps divides mmq_x --
-// i.e. all shipped defaults -- the size is unchanged, so this is a no-op there. Values above 8
-// are therefore testable again; whether they are FASTER is a separate question (OTHER=16
-// regressed to 497 t/s on Q5_K, an occupancy cliff unrelated to this bug). Discussion #23881
-// suggests 16 helps Q8 on MI60 -- re-sweep before changing any default.
+// Fixed 2026-08-03: both accumulators (mul_mat_q and mul_mat_q_stream_k_fixup) now round the
+// j0 dimension up instead of truncating. No-op for every shipped configuration (nwarps 4 and 8
+// divide all mmq_x the dispatcher tries), it only changes nwarps=16.
+//
+// HOWEVER: with that fix in place, nwarps=16 STILL faults identically
+// ("Memory access fault ... Write access to a read-only page", verified by re-running the
+// sweep on Ornith-1.0-9B-Q8_0). So the truncation was a genuine correctness bug but NOT the
+// cause of the crash. The actual cause is still unknown. Ruled out so far:
+//   - accumulator truncation (this fix)
+//   - block size per se: OTHER=16 also launches 1024 threads and does not fault
+//   - Q8-vs-OTHER knob mismatch: the q8_0 path is consistently parameterized via
+//     mmq_type_traits<..., GGML_TYPE_Q8_0>::nwarps
+// Next diagnostic step would be AMD_LOG_LEVEL=3 or rocgdb to identify the faulting kernel.
+// Until then: DO NOT set either knob to 16. Discussion #23881 suggests 16 helps Q8 on MI60;
+// that remains unverifiable here.
 #ifndef GGML_MMQ_NWARPS_GFX906_Q8
 #define GGML_MMQ_NWARPS_GFX906_Q8    8
 #endif
