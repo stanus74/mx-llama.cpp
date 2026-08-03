@@ -16,7 +16,7 @@ Phasen 1–4 und vom 2026-08-03 tatsächlich einbringt:
 | MMQ-Tuning | **~15 Zeilen** | **+7 % pp** *(gegen Mainline; +19…28 % galten nur gegen `nwarps=4` im Legacy-Pfad)* | Phase G, 2026-08-03 |
 | Multi-Stage TP (`-tps`) | ~885 + 728 Z. | **≈ +3 % pp** über upstreams `-sm tensor` | Phase G, 2026-08-03 |
 | MTP-Optimierungsschicht | verteilt | **+19 % Prefill** | MERGE_REPORT, Rauchtest 2026-08-03 |
-| GCN-Repack (`repack-gcn.cu`) | 2283 Z. | **nie isoliert gemessen** | — |
+| GCN-Repack (`repack-gcn.cu`) | 2283 Z. | **0 — toter Code, wird nie ausgeführt** | Phase 3, 2026-08-03 |
 | skyne98-Kernel-Ports | ~3000 Z. | **0** (MMVQ langsamer, MMF/FATTN-Q8 im Rauschen) | `port-gfx906-kernels-from-skyne98.md` |
 | Legacy-MMQ in `mmq.cuh` | 4465 Z. Diff | **negativ:** Q4_0 pp512 −7 % vs. Mainline | Phase 2.2, Tests A–D |
 
@@ -145,7 +145,36 @@ in keinem Verhältnis dazu — zumal genau diese Dateien den Merge-Aufwand treib
 
 ---
 
-## Phase 3: GCN-Repack — ⚠️ ERGEBNISLOS 2026-08-03 (Pfad wird nicht betreten)
+## Phase 3: GCN-Repack — ❌ ENTFÄLLT: toter Code (2026-08-03)
+
+> **Ergebnis der Instrumentierung (`GGML_CUDA_REPACK_DEBUG=1`, Commit `445cf9bdd`):**
+> Der Repack-Buffer-Type **wird angeboten**
+> (`ggml_backend_cuda_repack_buffer_type: offering repack buffer type for device 0`),
+> aber **kein einziger Tensor läuft hindurch** — null `repacking tensor`-Meldungen bei einem
+> Q5_K-Modell mit 427 Tensoren, von denen viele die Repack-Bedingungen erfüllen.
+>
+> **`repack-gcn.cu` ist toter Code.** Nicht „bringt wenig", sondern wird nie ausgeführt.
+> Da `make_gpu_buft_list` von allen Frontends geteilt wird, gilt das nicht nur für
+> `llama-bench`.
+>
+> **Ursache** (Codelesung, bestätigt durch den Befund): In
+> [../src/llama-model.cpp](../src/llama-model.cpp#L1063) wird der Default-Buffer-Type **vor**
+> den Extra-Bufts in die Liste eingefügt; die Auswahl nimmt den ersten passenden Eintrag, und
+> der Default unterstützt die Gewichte — also gewinnt er immer.
+>
+> **Entscheidung: nicht übernehmen.** Damit schrumpft der Fork auf im Wesentlichen *einen*
+> Patch (Phase 1, MMQ-Config für GCN5).
+>
+> **Bewusst nicht weiterverfolgt:** Eine erzwungene Messung über `-ot`
+> (`--override-tensor`) könnte beantworten, ob Repack überhaupt etwas gebracht *hätte*. Für
+> die Entscheidung ist das irrelevant — „läuft nicht" genügt.
+>
+> **Offen für den aktuellen Branch** (unabhängig vom Reduktionsplan): Der laufende Fork trägt
+> 2283 Zeilen ohne Wirkung plus die zugehörigen `ggml_backend_buft_is_cuda_repack`-Prüfungen
+> im Dispatch. Vor einem Löschen wäre zu klären, ob der Pfad früher aktiv war — sonst entfernt
+> man etwas, das nur eine falsch sortierte Liste am Wirken hindert.
+
+### Messprotokoll (führte zum Befund)
 
 Messung `ornith-1.0-9b-Q5_K_M`, single GPU (32-GB-Karte), `-r 3 -p 2048 -n 128`:
 
@@ -179,22 +208,19 @@ deutlich mehr als die +7 % bei Q8_0. Da Repack nachweislich inaktiv ist, stammt 
 Vorsprung **vollständig aus dem MMQ-Tuning**. Das stärkt Phase 1: bei K-Quants ist der
 MMQ-Config-Patch der größere Hebel.
 
-### Nächster Schritt: Instrumentierung statt weiterer Benchmarks
+### Methodische Lehre
 
-`llama-bench -v` protokolliert die Buffer-Type-Zuordnung nicht, weitere Messläufe bringen
-daher nichts. Stattdessen:
+Ohne die Positivkontrolle wäre hier „2283 Zeilen ohne Nutzen" gelandet — eine richtige
+Entscheidung aus falscher Begründung. Der Unterschied zählt: „bringt nichts" hätte bedeutet,
+der Code funktioniert und lohnt nicht; tatsächlich läuft er gar nicht.
 
-- [ ] Log-Zeile in `ggml_backend_cuda_repack_buffer_type()`
-      ([../ggml/src/ggml-cuda/repack-gcn.cu](../ggml/src/ggml-cuda/repack-gcn.cu#L2252)) —
-      wird der Typ überhaupt erzeugt?
-- [ ] Log-Zeile im Repack-Upload-Pfad — wird je ein Tensor tatsächlich repackt?
-- [ ] Falls „erzeugt, aber nie benutzt": Auswahllogik in `select_weight_buft` /
-      `make_gpu_buft_list` prüfen; testweise Repack **vor** dem Default einreihen
-- [ ] Erst mit aktivem Pfad die eigentliche A/B-Messung wiederholen
+**Regel für künftige A/B-Messungen über Schalter:** Zeigt ein Schalter keine Wirkung, ist die
+erste Frage nicht „nutzlos?", sondern „wurde der Pfad überhaupt betreten?". Dasselbe Muster
+trat am selben Tag beim MTP-Rauchtest auf (zwei Fehlversuche ohne `--spec-type draft-mtp`)
+und beim `nwarps=16`-Fault (MUL_MAT-Gate meldet 2/2, obwohl der Kernel faultet).
 
-**Entscheidung vertagt.** Solange nicht feststeht, ob Repack je aktiv war, ist weder
-„übernehmen" noch „streichen" begründbar. Sollte sich zeigen, dass der Pfad **nie** benutzt
-wurde, wären die 2283 Zeilen toter Code — dann ist die Streichung trivial begründet.
+Nebenbei: `llama-bench` unterdrückt `GGML_LOG_INFO` ohne `-v` — Instrumentierung braucht dort
+immer `-v`.
 
 ---
 
@@ -217,8 +243,9 @@ wurde, wären die 2283 Zeilen toter Code — dann ist die Streichung trivial beg
 ```
 b10238 (oder neuer)
   └─ patch/mmq-nwarps-gfx906        (~15 Zeilen, ggf. upstream)
-  └─ patch/tp-multistage            (nur falls Phase G es belegt)
-  └─ patch/repack-gcn               (nur falls Phase 3 es belegt)
+  (TP:     entfällt — Phase G: ≈ +3 % über upstreams -sm tensor)
+  (Repack: entfällt — Phase 3: toter Code, wird nie ausgeführt)
+  (MTP:    entfällt — Phase 4: höchste Wartungslast, +19 % Prefill)
 ```
 
 Statt 74 divergierender Dateien: zwei bis drei benannte Patches mit je einer Messung als
