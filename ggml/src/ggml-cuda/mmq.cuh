@@ -317,11 +317,21 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 //   4  -> 572.07 +/- 6.13 t/s   gate 2/2
 //   8  -> 733.96 +/- 7.37 t/s   gate 2/2   (+28.3%, current default)
 //   16 -> CRASHES: "Memory access fault ... Write access to a read-only page" in llama-bench.
-// DO NOT set either knob to 16. Note that test-backend-ops -o MUL_MAT passes 2/2 even at 16 --
-// the gate does not cover the real model's shapes, so it cannot catch this. 16 warps * 64
-// lanes = 1024 threads, i.e. exactly the gfx906 block-size limit; suspect an LDS tile /index
-// overflow at that block geometry. Discussion #23881 suggests 16 helps Q8 on MI60 -- that does
-// NOT transfer to this fork on MI50.
+//
+// ROOT CAUSE of the nwarps=16 crash (found 2026-08-03): the accumulator below,
+//     float sum[mmq_x*mmq_y / (nwarps*warp_size)];
+// is indexed as sum[j0/nwarps * mmq_y/warp_size + i0/warp_size], which implicitly assumes
+// mmq_x >= nwarps. On gfx906 (mmq_y=128, warp_size=64) mmq_y/warp_size = 2, and the dispatcher
+// tries tiles starting at mmq_x=8:
+//     nwarps=8,  mmq_x=8 -> size 8*128/512  = 2, indices {0,1}  -> exact fit
+//     nwarps=16, mmq_x=8 -> size 8*128/1024 = 1, indices {0,1}  -> OFF-BY-ONE WRITE
+// The integer division truncates and the array is one element short, so every thread writes
+// past its end. This is shape-dependent (only tiles that select mmq_x=8 trigger it), which is
+// exactly why test-backend-ops -o MUL_MAT passes 2/2 at nwarps=16 -- the gate never hits that
+// combination. It also means OTHER=16 is not merely slow but equally unsafe; the earlier Q5_K
+// sweep simply never selected an mmq_x=8 tile.
+// DO NOT set either knob above 8 unless the accumulator sizing is fixed first. Discussion
+// #23881 suggests 16 helps Q8 on MI60 -- that does NOT transfer to this fork on MI50.
 #ifndef GGML_MMQ_NWARPS_GFX906_Q8
 #define GGML_MMQ_NWARPS_GFX906_Q8    8
 #endif

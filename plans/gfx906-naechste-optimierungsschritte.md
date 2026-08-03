@@ -121,14 +121,42 @@ und taugt nicht als alleinige Absicherung — dasselbe Muster wie beim `-sm row`
 sind zu kurz zum Heat-Soak. Phase 0 war für diesen Sweep also nicht blockierend, bleibt es aber
 für längere pp4096/pp32768-Läufe.
 
-### B.2 `nwarps=16`-Crash aufklären (neu, aus B.1)
+### B.2 `nwarps=16`-Crash — ✅ URSACHE GEFUNDEN 2026-08-03
 
-- [ ] Repro mit `AMD_SERIALIZE_KERNEL=3 HIP_LAUNCH_BLOCKING=1`, um den auslösenden Kernel zu isolieren
-- [ ] Prüfen, ob es eine reine Blockgrößen-Grenze ist (16 × 64 = 1024 Threads = gfx906-Maximum)
-      oder ein echter Indexfehler im MMQ-Pfad, der auch bei anderen Konfigurationen lauern kann
-- [ ] LDS-Bedarf pro Block bei nwarps=16 gegen das 64-KB-Limit rechnen
-- [ ] Falls echter Bug: Fix oder harte Compile-Time-Schranke (`static_assert` gegen nwarps > 8)
-- [ ] MUL_MAT-Gate um Shapes ergänzen, die den Fall abdecken würden
+**Root Cause:** Akkumulator-Unterdimensionierung in [../ggml/src/ggml-cuda/mmq.cuh](../ggml/src/ggml-cuda/mmq.cuh#L3568):
+
+```c
+float sum[mmq_x*mmq_y / (nwarps*warp_size)];
+// indiziert als sum[j0/nwarps * mmq_y/warp_size + i0/warp_size]
+```
+
+Die Formel setzt implizit `mmq_x >= nwarps` voraus. Auf gfx906 ist `mmq_y=128`, `warp_size=64`,
+also `mmq_y/warp_size = 2`; der Dispatcher probiert Kacheln ab `mmq_x=8`:
+
+| nwarps | mmq_x | Array-Größe | benötigte Indizes | |
+|---:|---:|---:|---:|---|
+| 8 | 8 | 8·128/512 = 2 | 0, 1 | passt exakt |
+| 16 | 8 | 8·128/1024 = **1** | 0, 1 | **Off-by-one-Write** |
+
+Die Ganzzahldivision trunkiert → das Array ist ein Element zu kurz → jeder Thread schreibt
+darüber hinaus → `Memory access fault … Write access to a read-only page`.
+
+**Folgerungen:**
+
+1. **Shape-abhängig**, deshalb ist das MUL_MAT-Gate blind: nur Aufrufe, die `mmq_x=8` selektieren,
+   lösen den Fehler aus, und die trifft `test-backend-ops` nicht.
+2. **`OTHER=16` ist rückwirkend ebenfalls unsicher**, nicht nur langsam — der Q5_K-Sweep hat
+   offenbar nie eine `mmq_x=8`-Kachel selektiert, der Bug lauerte dort aber genauso.
+3. **Kein Fork-Bug** — die Formel stammt aus Upstream und fällt dort nicht auf, weil
+   `256/warp_size` auf keiner unterstützten Karte `nwarps > mmq_x_min` ergibt.
+
+**Offen (optional, nur falls nwarps > 8 je interessant wird):**
+
+- [ ] Fix: Array-Größe auf `max(1, mmq_x/nwarps) * (mmq_y/warp_size)` aufrunden, oder
+      `mmq_x`-Kandidaten unterhalb `nwarps` im Dispatcher überspringen
+- [ ] `static_assert(mmq_x >= nwarps)` als Schranke, damit der Fall nicht still durchrutscht
+- [ ] MUL_MAT-Gate um Shapes ergänzen, die eine `mmq_x=8`-Kachel erzwingen
+- [ ] Upstream-Meldung erwägen (latenter Bug, dort nur nicht erreichbar)
 
 - [x] **Q8_0-Modell vorhanden:** `/home/pat/data/models/Ornith-1.0-9B-Q8_0.gguf` (9,5 GB, nativ
       quantisiert, seit 2026-08-03 auf dem Server). Passt einzeln auf eine 32-GB-Karte →
