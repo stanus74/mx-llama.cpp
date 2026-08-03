@@ -313,3 +313,49 @@ Zwei unabhängig gewachsene Feature-Sets mussten kombiniert werden:
 3. **Tensor-Parallel-Rauchtest:** Da `llama-context.cpp` (Pipeline-Parallel-Gate) und `ggml-cuda.cu` (`split`/`repack`-Buffer-Support) beide tensor-parallel-relevant sind, den `-sm tensor`/`-tps`-Pfad gegenprüfen.
 4. **qwen35(moe).cpp-Semantik** beim nächsten Upstream-Sync erneut prüfen — falls upstream die Post-Norm-Reihenfolge dort aus funktionalen (nicht nur stilistischen) Gründen geändert hat, könnte das relevant werden, sobald der Fork versucht, diesen Pfad noch enger an upstream zu führen.
 5. Kein automatisierter Test wurde in dieser Session ausgeführt (auf Nutzerwunsch) — die obigen Punkte sind manuell nachzuholen.
+
+---
+
+# Merge upstream `b10238` → `merge-upstream-20260803` (2026-08-03)
+
+**Basis:** `port-skyne98-gfx906` (`c773c8faa`) · **Ziel:** Release-Tag `b10238` (`4ed2b13f7`)
+**Merge-Base:** `de699957b` (1. Aug) · **Umfang:** 20 Upstream-Commits, 49 Dateien,
++3775/−523 Zeilen.
+
+## Konflikte
+
+| Datei | Entscheidung | Begründung | Restrisiko |
+|---|---|---|---|
+| `AGENTS.md` | **Fork-Version behalten** (`--ours`) | Ganzdatei-Konflikt: Fork-Anleitung (90 Z.) vs. upstreams Contributor-Doku (248 Z., #26405). AGENTS.md hält selbst fest, dass die Upstream-Contributor-Policy für diesen privaten Fork nicht gilt — die Entscheidung war also bereits dokumentiert, nicht neu zu treffen. | Keins. Upstreams Inhalte (Kommentarstil, Jinja) sind für den Fork nicht bindend; bei Bedarf separat ablegen. |
+
+## Automatisch gemergte, fork-kritische Dateien
+
+Upstream hat in diesem Zyklus **eigenes MTP** eingeführt (Qwen3-Next #25589,
+DeepSeek V3.2 #26457, DeepSeek V4 + DSpark #25784, MiMo V2 #26412). Diese Commits
+fassen `llama-model.cpp`, `llama-graph.cpp` (+172 Z.), `llama-context.cpp` und
+`common/speculative.cpp` an — exakt die Dateien der Fork-MTP-Implementierung.
+Git hat sie **ohne Konfliktmarker** zusammengeführt, was laut Workflow-Schritt 3
+der gefährlichste Fall ist. Daher explizit geprüft:
+
+- **Fork-MTP-Symbole vollständig vorhanden:** `deferred_prefill`, `pre_norm_accum`,
+  `adaptive_disable`, `mtp_prefill_kv_only`, `LLAMA_ENABLE_MTP_OPT`.
+- **Keine Upstream-Renames der kritischen Felder:** `embeddings_nextn` (20),
+  `t_h_nextn` (19), `n_layer_all` (27) unverändert; `t_h_pre_norm` 0 Treffer (korrekt).
+- **`embeddings_pre_norm`** (13 Treffer) ist die *fork-eigene* API
+  `llama_set/get_embeddings_pre_norm_accum`, nicht das umbenannte Upstream-Feld.
+  Trefferzahlen vor und nach dem Merge identisch → kein Drift.
+- **`llama-graph.h`**: Upstream-Änderungen sind rein additiv
+  (`llm_graph_input_attn_k_iswa`), keine Signaturänderungen an genutzter API.
+
+**`ggml/src/ggml-cuda/` wurde nicht angefasst** — gfx906-Kernel, MMQ-nwarps-Tuning
+und Repack-Pfad sind unberührt.
+
+## Offen / nachzuholen
+
+1. **HIP-Build auf dem Server** — bisher nicht ausgeführt.
+2. **MTP-Rauchtest**, besonders wegen der neuen Upstream-MTP-Pfade: prüfen, ob
+   Fork-MTP und Upstream-MTP sich am selben Modell in die Quere kommen.
+3. **TP-Rauchtest** (`-sm tensor -tps 2`), da `llama-context.cpp` erneut berührt wurde.
+4. Semantische Kollision Fork-MTP ↔ Upstream-MTP mittelfristig bewerten: upstream baut
+   dieselbe Funktionalität nun selbst, was die Frage aufwirft, ob der Fork seinen
+   eigenen Pfad langfristig behalten will.
