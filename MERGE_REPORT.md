@@ -330,12 +330,27 @@ Zwei unabhängig gewachsene Feature-Sets mussten kombiniert werden:
 
 ## Automatisch gemergte, fork-kritische Dateien
 
-Upstream hat in diesem Zyklus **eigenes MTP** eingeführt (Qwen3-Next #25589,
-DeepSeek V3.2 #26457, DeepSeek V4 + DSpark #25784, MiMo V2 #26412). Diese Commits
-fassen `llama-model.cpp`, `llama-graph.cpp` (+172 Z.), `llama-context.cpp` und
-`common/speculative.cpp` an — exakt die Dateien der Fork-MTP-Implementierung.
+**Verhältnis Fork-MTP ↔ Upstream-MTP (wichtig für die Risikobewertung):** Es handelt
+sich *nicht* um zwei konkurrierende Implementierungen. Die **MTP-Basis gehört upstream**
+(in `b10238`: 20 Fundstellen in `common/speculative.cpp`, 6 in `llama-model.cpp`,
+2 in `llama-context.cpp`) und existiert dort seit längerem. Der Fork setzt darauf eine
+**Optimierungsschicht** (`LLAMA_ENABLE_MTP_OPT`, `deferred_prefill`, `adaptive_disable`,
+`mtp_prefill_kv_only`) — diese vier Symbole kommen in `b10238` **null mal** vor.
+
+In diesem Zyklus hat upstream die Basis um weitere Modelle erweitert (Qwen3-Next #25589,
+DeepSeek V3.2 #26457, DeepSeek V4 + DSpark #25784, MiMo V2 #26412). Diese Commits fassen
+`llama-model.cpp`, `llama-graph.cpp` (+172 Z.), `llama-context.cpp` und
+`common/speculative.cpp` an — exakt die Dateien, in denen auch die Fork-Schicht liegt.
 Git hat sie **ohne Konfliktmarker** zusammengeführt, was laut Workflow-Schritt 3
-der gefährlichste Fall ist. Daher explizit geprüft:
+der gefährlichste Fall ist.
+
+**Das Risiko ist damit enger, aber nicht kleiner:** Die Fork-Schicht setzt bestimmte
+Semantik der Basis voraus (Pre-Norm-Hidden-State). Bricht sie, dann nicht durch Kollision
+zweier Implementierungen, sondern weil sich das Fundament unter der Erweiterung bewegt hat.
+Ein erfolgreicher Build beweist das *nicht* — Symbole und Signaturen können passen, während
+der Draft-Pfad zur Laufzeit falsche Hidden States bekommt.
+
+Daher explizit geprüft:
 
 - **Fork-MTP-Symbole vollständig vorhanden:** `deferred_prefill`, `pre_norm_accum`,
   `adaptive_disable`, `mtp_prefill_kv_only`, `LLAMA_ENABLE_MTP_OPT`.
@@ -353,9 +368,11 @@ und Repack-Pfad sind unberührt.
 ## Offen / nachzuholen
 
 1. **HIP-Build auf dem Server** — bisher nicht ausgeführt.
-2. **MTP-Rauchtest**, besonders wegen der neuen Upstream-MTP-Pfade: prüfen, ob
-   Fork-MTP und Upstream-MTP sich am selben Modell in die Quere kommen.
+2. **MTP-Rauchtest** — der eigentliche Prüfstein, nicht der Build: dasselbe MTP-Modell
+   **mit und ohne `LLAMA_ENABLE_MTP_OPT`** laufen lassen und die Ausgaben vergleichen.
+   Weicht nur der optimierte Pfad ab, hat die erweiterte Upstream-Basis die von der
+   Fork-Schicht vorausgesetzte Semantik verschoben.
 3. **TP-Rauchtest** (`-sm tensor -tps 2`), da `llama-context.cpp` erneut berührt wurde.
-4. Semantische Kollision Fork-MTP ↔ Upstream-MTP mittelfristig bewerten: upstream baut
-   dieselbe Funktionalität nun selbst, was die Frage aufwirft, ob der Fork seinen
-   eigenen Pfad langfristig behalten will.
+4. Mittelfristig bewerten, wie eng die Fork-Schicht an die Upstream-Basis gekoppelt bleiben
+   soll: upstream erweitert die Basis aktiv um neue Modelle, was bei jedem Sync erneut
+   dieselbe Semantik-Prüfung erzwingt.
