@@ -22,9 +22,12 @@ set -uo pipefail
 [[ ! -f "CMakeLists.txt" ]] && echo "❌ Nicht im llama.cpp-Root-Verzeichnis!" && exit 1
 
 # ------------------------------------------------------------------ CONFIG ---
-MODEL="${1:-${MODEL:-$HOME/data/models/Qwopus3.6-35B-A3B-Coder-APEX-MTP-Balanced.gguf}}"# For a Q4_0 model (e.g. Ornith-1.0-9B-Q4_0.gguf) use:
+MODEL="${1:-${MODEL:-$HOME/data/models/Qwopus3.6-35B-A3B-Coder-APEX-MTP-Balanced.gguf}}"
+# For a Q4_0 model (e.g. Ornith-1.0-9B-Q4_0.gguf) use:
 #   MODEL=~/data/models/Ornith-1.0-9B-Q4_0.gguf OTHER_VALUES="4 8 16" BENCH_ARGS="..." scripts/bench-gfx906-nwarps.sh
-# because Q4_0 is governed by GGML_MMQ_NWARPS_GFX906_OTHER, not Q8.BUILD_DIR="${BUILD_DIR:-build-nwarps-sweep}"     # separate from your main build/
+# because Q4_0 is governed by GGML_MMQ_NWARPS_GFX906_OTHER, not Q8.
+
+BUILD_DIR="${BUILD_DIR:-build-nwarps-sweep}"     # separate from your main build/
 
 # Sweep matrix (space-separated warp counts per knob). Use POWERS OF 2 only — non-pow2 values
 # (e.g. 12) don't divide the MMQ tiles and fail the MUL_MAT gate.
