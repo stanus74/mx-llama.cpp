@@ -365,14 +365,44 @@ Daher explizit geprüft:
 **`ggml/src/ggml-cuda/` wurde nicht angefasst** — gfx906-Kernel, MMQ-nwarps-Tuning
 und Repack-Pfad sind unberührt.
 
+## Verifikation
+
+### 1. HIP-Build ✅ (2026-08-03, `build_mi50_20260803.log`)
+
+343/343 Targets, **kein Compile- oder Link-Fehler**. Einziger Logtreffer ist kosmetisch:
+der Web-UI-Build konnte `dist.tar.gz` (b10289) nicht herunterladen — betrifft nur das
+Frontend von `llama-server`, nicht den C++-Build.
+
+### 2. MTP-Rauchtest ✅ (2026-08-03)
+
+Modell `Qwopus3.6-27B-Coder-Compat-MTP-Q6_K.gguf`, je ein Lauf, identischer Seed
+(`-s 42 -n 128 -no-cnv -st`), MTP über `--spec-type draft-mtp` aktiviert:
+
+| Konfiguration | Prompt | Generation |
+|---|---:|---:|
+| MTP an, `LLAMA_ENABLE_MTP_OPT` **aus** | 36,2 t/s | 26,6 t/s |
+| MTP an, `LLAMA_ENABLE_MTP_OPT` **an** | **43,2 t/s** | 26,7 t/s |
+
+- **Ausgabe identisch** in Struktur und Inhalt → die Fork-Schicht bekommt auf der
+  erweiterten Upstream-Basis weiterhin korrekte Hidden States. **Keine Semantik-Verschiebung.**
+- **Fork-Optimierung aktiv und wirksam:** +19 % Prompt Processing — genau der Angriffspunkt
+  von `deferred_prefill`. Generation unverändert, wie vom Design erwartet.
+- **Einschränkung:** je ein Lauf, kurzer Prompt, dazu die bekannten Taktschwankungen der
+  Karte (siehe `plans/gfx906-naechste-optimierungsschritte.md` Phase 0). Als Ja/Nein-Antwort
+  belastbar, als Performance-Zahl nicht.
+
+**Methodische Falle, die dabei zwei Fehlversuche gekostet hat:** Ohne `--spec-type draft-mtp`
+läuft *keine* Spekulativdekodierung, und `LLAMA_ENABLE_MTP_OPT` bleibt folgenlos — beide Läufe
+sehen dann identisch aus und suggerieren fälschlich „kein Unterschied". Ein lokales `-md`
+hilft nicht, da eine explizite Draft-Datei laut `common/arg.cpp:549` die Sidecar-Auflösung
+abschaltet, über die der MTP-Typ sonst gesetzt würde. Der MTP-Kopf steckt bei diesen Modellen
+im GGUF selbst, ein separates Draft-Modell ist weder nötig noch ausreichend.
+
 ## Offen / nachzuholen
 
-1. **HIP-Build auf dem Server** — bisher nicht ausgeführt.
-2. **MTP-Rauchtest** — der eigentliche Prüfstein, nicht der Build: dasselbe MTP-Modell
-   **mit und ohne `LLAMA_ENABLE_MTP_OPT`** laufen lassen und die Ausgaben vergleichen.
-   Weicht nur der optimierte Pfad ab, hat die erweiterte Upstream-Basis die von der
-   Fork-Schicht vorausgesetzte Semantik verschoben.
 3. **TP-Rauchtest** (`-sm tensor -tps 2`), da `llama-context.cpp` erneut berührt wurde.
+   Beachten: laut AGENTS.md crasht `-sm tensor` + MTP bei asymmetrischem VRAM (16/32 GB) —
+   TP daher ohne MTP-Modell prüfen.
 4. Mittelfristig bewerten, wie eng die Fork-Schicht an die Upstream-Basis gekoppelt bleiben
    soll: upstream erweitert die Basis aktiv um neue Modelle, was bei jedem Sync erneut
    dieselbe Semantik-Prüfung erzwingt.
