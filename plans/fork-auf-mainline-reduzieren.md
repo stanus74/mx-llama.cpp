@@ -13,8 +13,8 @@ Phasen 1–4 und vom 2026-08-03 tatsächlich einbringt:
 
 | Bestandteil | Umfang | Gemessener Nutzen | Quelle |
 |---|---:|---|---|
-| MMQ-`nwarps` 4→8 | **~15 Zeilen** | **+19 % … +28 % pp** | `mmq.cuh`-Kommentar, Sweep 2026-08-03 |
-| Multi-Stage TP (`-tps`) | ~885 + 728 Z. | **+32 % pp** | Nutzer-Messung, Baseline unklar → Gate |
+| MMQ-Tuning | **~15 Zeilen** | **+7 % pp** *(gegen Mainline; +19…28 % galten nur gegen `nwarps=4` im Legacy-Pfad)* | Phase G, 2026-08-03 |
+| Multi-Stage TP (`-tps`) | ~885 + 728 Z. | **≈ +3 % pp** über upstreams `-sm tensor` | Phase G, 2026-08-03 |
 | MTP-Optimierungsschicht | verteilt | **+19 % Prefill** | MERGE_REPORT, Rauchtest 2026-08-03 |
 | GCN-Repack (`repack-gcn.cu`) | 2283 Z. | **nie isoliert gemessen** | — |
 | skyne98-Kernel-Ports | ~3000 Z. | **0** (MMVQ langsamer, MMF/FATTN-Q8 im Rauschen) | `port-gfx906-kernels-from-skyne98.md` |
@@ -41,19 +41,46 @@ oder ohne TP lief.**
 Davon hängt der teuerste Teil des ganzen Plans ab: Custom-AllReduce + Meta-Device sind
 ~1600 Zeilen. Liefert upstreams TP den Großteil des Gewinns bereits, entfallen sie ersatzlos.
 
-- [ ] Identisches Modell, identische Flags, drei Konfigurationen auf derselben Maschine:
-  1. Mainline (`/opt/llama.cpp`, `b10238`) **ohne** TP — Referenz
-  2. Mainline **mit** `-sm tensor`
-  3. Fork mit `-sm tensor -tps 2`
-- [ ] `llama-bench`, ≥ 5 Wiederholungen, pp2048 und pp4096, Median
-- [ ] Taktprotokoll mitschreiben (siehe `gfx906-naechste-optimierungsschritte.md` Phase 0)
+### ✅ ERLEDIGT 2026-08-03 — Ergebnis: Multi-Stage-TP **nicht** portieren
 
-**Entscheidungsregel:**
+Modell `Ornith-1.0-9B-Q8_0` (qwen35 9B Q8_0), `llama-bench -ngl 99 -fa 1 -r 3 -p 2048 -n 128`.
+Mainline `/opt/llama.cpp` auf `f2b52a87e` (= `b10238` + 1), Fork auf `aacf2aeb5`.
+**Vier** statt drei Konfigurationen — die vierte war nötig, weil Konfiguration C sonst zwei
+Fork-Vorteile gleichzeitig enthält (TP **und** MMQ-Tuning):
 
-| Ergebnis | Konsequenz |
-|---|---|
-| Mainline-TP ≈ Fork-TP | Multi-Stage-TP **nicht** portieren — größter Einzelgewinn an Wartbarkeit |
-| Fork-TP deutlich besser | Portieren, aber als isolierter, klar abgegrenzter Patch |
+| | pp2048 | tg128 |
+|---|---:|---:|
+| **A** Mainline, 1 GPU | 685,53 ± 0,55 | 49,31 ± 0,16 |
+| **D** Fork, 1 GPU | 733,90 ± 0,43 | 50,88 ± 0,07 |
+| **B** Mainline, `-sm tensor` | 1114,53 ± 1,15 | 59,63 ± 4,13 |
+| **C** Fork, `-sm tensor -tps 2` | 1231,67 ± 0,54 | 59,49 ± 4,06 |
+
+**Zerlegung (pp2048):**
+
+- **Upstream-TP allein: +62,6 %** (A→B) — der ganz überwiegende Teil des Multi-GPU-Gewinns
+- **MMQ-Tuning des Forks: +7,1 %** (A→D), sauber isoliert auf einer GPU
+- **Fork-TP über Upstream-TP: +10,5 % roh** (B→C), darin steckt das MMQ-Tuning erneut.
+  Herausgerechnet (1231,67 / (1114,53 × 1,071)) bleiben für Multi-Stage-TP selbst **≈ +3 %**.
+
+**Konsequenz:** ~1600 Zeilen Custom-AllReduce und Meta-Device — ausgerechnet die Komponenten,
+die bei Upstream-Merges die meiste Unruhe stiften — liefern gegenüber upstreams eigenem TP
+etwa **drei Prozent**. Klarster Streichkandidat des Plans. → **Phase 2 entfällt.**
+
+**Die früher berichteten +32 % sind damit erklärt:** der Vergleich lief gegen Mainline *ohne*
+TP. Gegen Mainline *mit* `-sm tensor` bleibt fast nichts übrig.
+
+**Nebenbefunde:**
+
+- **Das MMQ-Tuning bringt gegenüber Mainline +7 %, nicht +28 %.** Die +28 % waren `nwarps`
+  4→8 *innerhalb des Legacy-Pfads*; Mainlines RDNA2-Fallback-Config ist deutlich besser als
+  `nwarps=4`. Phase 1 bleibt lohnend, aber die Erwartung ist entsprechend zu korrigieren.
+- **tg ist bei TP nicht unterscheidbar** (59,63 vs. 59,49 bei σ ≈ 4). Token-Generierung ist
+  bandbreiten-, nicht parallelisierungslimitiert.
+
+**Belastbarkeit:** σ zwischen 0,43 und 1,15 auf allen pp-Messungen — die bekannten
+Taktschwankungen haben hier nicht gestört, Phase 0 war für diesen Vergleich nicht blockierend.
+Einschränkung: **ein** Modell, **eine** Quantisierung, nur pp2048/tg128. Vor einer endgültigen
+Löschung des TP-Codes mit einem zweiten Modell gegenprüfen.
 
 ---
 
@@ -105,11 +132,16 @@ Herleitung sollte als eigene Messung dargestellt werden, nicht als Werkzeugausga
 
 ---
 
-## Phase 2: TP — nur falls Phase G es rechtfertigt
+## Phase 2: TP — ❌ ENTFÄLLT (Phase G, 2026-08-03)
 
-- [ ] Abhängig von Phase G, sonst überspringen
-- [ ] Bei Portierung: `-tps`-Flag, `tp-allreduce.cu`, Meta-Device-Anteile in
-      `ggml-backend-meta.cpp` als **ein** zusammenhängender Patch, nicht verstreut
+Multi-Stage-TP liefert gegenüber upstreams `-sm tensor` nur ≈ +3 % pp2048. Der Aufwand
+(~1600 Zeilen in `tp-allreduce.cu` und `ggml-backend-meta.cpp`, plus das `-tps`-Flag) steht
+in keinem Verhältnis dazu — zumal genau diese Dateien den Merge-Aufwand treiben.
+
+- [x] Entscheidung: **nicht portieren**, upstreams `-sm tensor` genügt
+- [ ] Vor dem endgültigen Verwerfen: Gegenprobe mit einem zweiten Modell (Phase G lief auf
+      einem einzigen 9B-Q8_0)
+- [ ] `-tps` aus der Doku entfernen bzw. auf `-sm tensor` umleiten (AGENTS.md, README-Hinweise)
 
 ---
 
