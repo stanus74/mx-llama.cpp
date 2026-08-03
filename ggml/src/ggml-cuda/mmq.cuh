@@ -354,6 +354,15 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 #define GGML_MMQ_NWARPS_GFX906_OTHER 8
 #endif
 
+// Hard guard: 16 faults on gfx906 for reasons not yet understood (see above), and the
+// MUL_MAT gate does not catch it -- a bad value only shows up as a GPU memory fault during
+// real inference. Fail the build instead. Raise this bound only together with a re-sweep
+// that is verified with llama-bench on a real model, not just test-backend-ops.
+static_assert(GGML_MMQ_NWARPS_GFX906_Q8    >= 1 && GGML_MMQ_NWARPS_GFX906_Q8    <= 8,
+    "GGML_MMQ_NWARPS_GFX906_Q8 must be in [1,8]: 16 causes a GPU memory access fault on gfx906");
+static_assert(GGML_MMQ_NWARPS_GFX906_OTHER >= 1 && GGML_MMQ_NWARPS_GFX906_OTHER <= 8,
+    "GGML_MMQ_NWARPS_GFX906_OTHER must be in [1,8]: 16 regresses badly and shares the nwarps=16 fault risk");
+
 #if defined(GGML_USE_HIP)
 template <ggml_type type>
 static int mmq_get_nwarps_host(const int cc, const int warp_size) {

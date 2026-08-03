@@ -34,8 +34,11 @@ BUILD_DIR="${BUILD_DIR:-build-nwarps-sweep}"     # separate from your main build
 # NOTE: the Q8 knob only affects Q8_0-weight models; the OTHER knob affects every other quant
 # (Q4_K/Q5_K/Q6_K/IQ*/…). Sweep the dimension that matches your model's quant — for a non-Q8
 # model, fix Q8_VALUES="8" and sweep OTHER_VALUES.
+# NOTE: 16 is rejected at compile time by a static_assert in mmq.cuh -- it faults the GPU on
+# gfx906 for reasons not yet understood, and the MUL_MAT gate does not catch it. Sweeping it
+# would just yield BUILD_FAIL. Remove the guard first if you want to investigate.
 Q8_VALUES="${Q8_VALUES:-8}"
-OTHER_VALUES="${OTHER_VALUES:-4 8 16}"
+OTHER_VALUES="${OTHER_VALUES:-4 8}"
 
 # Correctness gate:
 GATE_RUNS="${GATE_RUNS:-2}"
