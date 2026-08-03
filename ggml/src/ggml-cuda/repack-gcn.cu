@@ -2173,6 +2173,21 @@ static void ggml_backend_cuda_repack_buffer_set_tensor(
     GGML_ASSERT(size == ggml_nbytes(tensor));
     GGML_ASSERT(ggml_cuda_repack_tensor_supported(tensor));
 
+    // Diagnostic (GGML_CUDA_REPACK_DEBUG=1): confirms that weights actually travel through
+    // the repack path. Benchmarks alone cannot tell "repack is useless" from "repack never
+    // ran" -- toggling GGML_CUDA_REPACK and GGML_CUDA_REPACK_Q8_0 both showed zero effect on
+    // 2026-08-03, which turned out to be the latter.
+    static const bool debug = [] {
+        const char * e = getenv("GGML_CUDA_REPACK_DEBUG");
+        return e != nullptr && e[0] != '0';
+    }();
+    if (debug) {
+        static int n_repacked = 0;
+        GGML_LOG_INFO("%s: repacking tensor #%d '%s' type=%s ne=[%lld,%lld,%lld]\n",
+                __func__, ++n_repacked, tensor->name, ggml_type_name(tensor->type),
+                (long long) tensor->ne[0], (long long) tensor->ne[1], (long long) tensor->ne[2]);
+    }
+
     const int64_t ne0 = tensor->ne[0];
     const int64_t ne1 = tensor->ne[1];
     const int64_t ne2 = tensor->ne[2]; // experts (1 for plain 2D weights)
@@ -2257,14 +2272,28 @@ ggml_backend_buffer_type_t ggml_backend_cuda_repack_buffer_type(int device) {
     // weights cannot be read back: llama-quantize/save from a loaded
     // model needs the opt-out.)
     const char * env = getenv("GGML_CUDA_REPACK");
+    static const bool debug = [] {
+        const char * e = getenv("GGML_CUDA_REPACK_DEBUG");
+        return e != nullptr && e[0] != '0';
+    }();
     if (env != nullptr && env[0] == '0') {
+        if (debug) {
+            GGML_LOG_INFO("%s: disabled via GGML_CUDA_REPACK=0\n", __func__);
+        }
         return nullptr;
     }
     if (device >= ggml_backend_cuda_get_device_count()) {
         return nullptr;
     }
     if (!GGML_CUDA_CC_IS_GCN(ggml_cuda_info().devices[device].cc)) {
+        if (debug) {
+            GGML_LOG_INFO("%s: device %d is not GCN, no repack buffer type\n", __func__, device);
+        }
         return nullptr;
+    }
+
+    if (debug) {
+        GGML_LOG_INFO("%s: offering repack buffer type for device %d\n", __func__, device);
     }
 
     static ggml_backend_buffer_type buft_storage[GGML_CUDA_MAX_DEVICES];

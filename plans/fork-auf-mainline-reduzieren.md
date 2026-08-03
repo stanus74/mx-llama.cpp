@@ -145,12 +145,56 @@ in keinem Verhältnis dazu — zumal genau diese Dateien den Merge-Aufwand treib
 
 ---
 
-## Phase 3: GCN-Repack — erst messen, dann entscheiden
+## Phase 3: GCN-Repack — ⚠️ ERGEBNISLOS 2026-08-03 (Pfad wird nicht betreten)
 
-2283 Zeilen ohne isolierte Messung sind der größte blinde Fleck des Forks.
+Messung `ornith-1.0-9b-Q5_K_M`, single GPU (32-GB-Karte), `-r 3 -p 2048 -n 128`:
 
-- [ ] A/B über den vorhandenen Schalter bzw. `ggml_backend_buft_is_cuda_repack`-Pfad
-- [ ] Ohne belegten Gewinn: **nicht** übernehmen
+| Konfiguration | pp2048 | tg128 |
+|---|---:|---:|
+| Fork, Repack **an** (Default) | 679,69 ± 0,80 | 48,86 ± 0,14 |
+| Fork, Repack **aus** (`GGML_CUDA_REPACK=0`) | 679,54 ± 0,69 | 48,97 ± 0,09 |
+| Mainline (kein Repack, kein MMQ-Tuning) | 580,44 ± 0,73 | 46,53 ± 0,17 |
+
+**Kein Unterschied zwischen an und aus — aber das ist keine Aussage über den Nutzen von
+Repack, sondern über seine Aktivierung.** Positivkontrolle mit `GGML_CUDA_REPACK_Q8_0=1` auf
+`Ornith-1.0-9B-Q8_0` (laut Code-Kommentar „+43 % Prefill auf einem reinen Q8_0-Modell"):
+
+| | pp2048 | tg128 |
+|---|---:|---:|
+| Q8-Repack aus (Default) | 733,81 ± 0,56 | 50,97 |
+| Q8-Repack an | 733,85 ± 0,48 | 50,98 |
+
+**Zwei unabhängige Schalter ohne jede Wirkung → der Repack-Pfad wird nie betreten.**
+Phase 3 ist damit **ergebnislos, nicht negativ**. Ohne die Positivkontrolle wäre hier
+fälschlich „2283 Zeilen ohne Nutzen, streichen" gelandet.
+
+**Codeinspektion — mutmaßliche Ursache:** In [../src/llama-model.cpp](../src/llama-model.cpp#L1063)
+fügt `make_gpu_buft_list` erst den **Default**-Buffer-Type ein (Z. 1063) und danach die
+Extra-Bufts inkl. Repack (Z. 1074). Wird die Liste nach dem ersten passenden Eintrag
+durchsucht, gewinnt immer der Default. **Keine Merge-Regression** — die Reihenfolge ist in
+`port-skyne98-gfx906` und nach dem `b10238`-Merge identisch, der Zustand bestand also vorher.
+
+**Wertvoller Nebenbefund:** Der Fork schlägt Mainline bei Q5_K um **+17,1 %** (580 → 679) —
+deutlich mehr als die +7 % bei Q8_0. Da Repack nachweislich inaktiv ist, stammt dieser
+Vorsprung **vollständig aus dem MMQ-Tuning**. Das stärkt Phase 1: bei K-Quants ist der
+MMQ-Config-Patch der größere Hebel.
+
+### Nächster Schritt: Instrumentierung statt weiterer Benchmarks
+
+`llama-bench -v` protokolliert die Buffer-Type-Zuordnung nicht, weitere Messläufe bringen
+daher nichts. Stattdessen:
+
+- [ ] Log-Zeile in `ggml_backend_cuda_repack_buffer_type()`
+      ([../ggml/src/ggml-cuda/repack-gcn.cu](../ggml/src/ggml-cuda/repack-gcn.cu#L2252)) —
+      wird der Typ überhaupt erzeugt?
+- [ ] Log-Zeile im Repack-Upload-Pfad — wird je ein Tensor tatsächlich repackt?
+- [ ] Falls „erzeugt, aber nie benutzt": Auswahllogik in `select_weight_buft` /
+      `make_gpu_buft_list` prüfen; testweise Repack **vor** dem Default einreihen
+- [ ] Erst mit aktivem Pfad die eigentliche A/B-Messung wiederholen
+
+**Entscheidung vertagt.** Solange nicht feststeht, ob Repack je aktiv war, ist weder
+„übernehmen" noch „streichen" begründbar. Sollte sich zeigen, dass der Pfad **nie** benutzt
+wurde, wären die 2283 Zeilen toter Code — dann ist die Streichung trivial begründet.
 
 ---
 
