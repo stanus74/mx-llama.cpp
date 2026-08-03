@@ -57,18 +57,48 @@ Davon hängt der teuerste Teil des ganzen Plans ab: Custom-AllReduce + Meta-Devi
 
 ---
 
-## Phase 1: `nwarps` — sofort, bevorzugt als Upstream-PR
+## Phase 1: MMQ-Config für GCN5 — **neu implementieren, nicht portieren**
 
 Der beste Nutzen/Aufwand-Quotient im gesamten Fork. Es ist **kein Fork-Feature**, sondern die
-Korrektur einer Heuristik (`256/warp_size`), die für non-MFMA-AMD falsch dimensioniert ist.
-Discussion #23881 existiert bereits.
+Korrektur einer für GCN5 falsch gewählten Konfiguration.
 
-- [ ] Patch isolieren: `mmq_get_nwarps_host` / `_compile` / `_device` + die beiden Defines
-- [ ] Zusätzlich den am 2026-08-03 gefundenen **Off-by-one** melden/fixen:
-      `sum[mmq_x*mmq_y/(nwarps*warp_size)]` unterdimensioniert, sobald `nwarps > mmq_x`
-      (Details in `mmq.cuh` und `gfx906-naechste-optimierungsschritte.md` B.2)
+### Befund: auf Mainline sieht dieser Patch anders — und besser — aus
+
+Mainline hat MMQ umgebaut. `nwarps` ist dort **kein Define mehr**, sondern folgt aus
+`config.nthreads / warp_size` ([b10238 `mmq.cuh:1396`]), und die Config kommt aus
+`ggml_cuda_mmq_get_config_*` **pro Architektur**. Die Auswahl in `b10238`:
+
+```c
+if (GGML_CUDA_CC_IS_AMD(cc)) {
+    if (GGML_CUDA_CC_IS_CDNA(cc))    return ..._cdna(...);
+    if (GGML_CUDA_CC_IS_RDNA4(cc))   return ..._rdna4(...);
+    if (GGML_CUDA_CC_IS_RDNA3_5(cc)) return ..._rdna3_5(...);
+    if (GGML_CUDA_CC_IS_RDNA3(cc))   return ..._rdna3(...);
+    return ..._rdna2(...);           // <-- gfx906 landet hier
+}
+```
+
+**gfx906 (GCN5) hat keinen eigenen Fall und bekommt die RDNA2-Config** — auf einer Karte mit
+doppelter Wave-Größe (64 statt 32). Das ist exakt dieselbe Unterdimensionierung wie die vom
+Fork gefundene `256/warp_size`-Heuristik, nur in der neuen Struktur.
+
+**Konsequenz:** Der Patch wird auf Mainline **kleiner und sauberer** — ein neuer
+`ggml_cuda_mmq_get_config_gcn5`-Zweig statt Define-Overrides plus 4465 Zeilen Legacy-MMQ.
+Genau die Form, die upstream vorgesehen hat, und damit als PR realistisch.
+
+### Aufgaben
+
+- [ ] `ggml_cuda_mmq_get_config_gcn5` (bzw. `_vega20`) anlegen und im Dispatch vor dem
+      RDNA2-Fallback einhängen
+- [ ] Ausgangswert: `nthreads = 8 * 64 = 512` (entspricht dem gemessenen `nwarps = 8`)
+- [ ] Gegen **Mainline-Baseline** messen, nicht gegen den Fork — die Zahlen aus
+      `gfx906-naechste-optimierungsschritte.md` B.1 gelten für den Legacy-Pfad
+- [ ] Prüfen, ob der Q4_0-pp512-Rückstand (−7 %) damit ohnehin verschwindet
 - [ ] Upstream-PR erwägen — bei Aufnahme **null Pflegeaufwand**
-- [ ] Bis dahin: als lokaler Patch auf `b10238` führen
+
+**Nicht mitnehmen:** Der Akkumulator-Off-by-one (`4e8441f69`) und die `static_assert`-Schranke
+(`aacf2aeb5`) betreffen den **Legacy**-Pfad. Ob Mainlines redesigntes MMQ dieselbe
+Trunkierung hat, ist offen — vor einer Upstream-Meldung erst dort nachrechnen.
 
 **Hinweis:** Upstream hat eine Anti-AI-PR-Policy. Der Patch ist klein und gut messbar; die
 Herleitung sollte als eigene Messung dargestellt werden, nicht als Werkzeugausgabe.
@@ -117,6 +147,55 @@ b10238 (oder neuer)
 
 Statt 74 divergierender Dateien: zwei bis drei benannte Patches mit je einer Messung als
 Rechtfertigung. Upstream-Sync wird zum Rebase dieser Patches.
+
+---
+
+## Betriebsmodell: vom mergenden zum rebasenden Fork
+
+Das ist der eigentliche Hebel — wichtiger als jede einzelne Patch-Entscheidung.
+
+**Heute (mergend):** Upstream wird hereingemerged. Die Historie wächst, der eigene Anteil
+verschwimmt über 74 Dateien, und Git wendet upstream-weite Änderungen ohne Marker an. Genau
+so konnte der `b10238`-Merge vier Dateien der MTP-Komponente anfassen, ohne einen einzigen
+Konflikt zu melden.
+
+**Ziel (rebasend, Patch-Queue):**
+
+```bash
+git checkout -b gfx906 b10238        # Basis = getaggter Mainline-Stand
+# darauf N saubere, thematisch getrennte Commits
+```
+
+Beim nächsten Release:
+
+```bash
+git fetch upstream --tags
+git rebase --onto b10xyz b10238 gfx906
+```
+
+**Was das praktisch ändert:**
+
+- `git log b10238..gfx906` zeigt **immer** exakt die eigenen Patches — der Fork-Anteil ist
+  jederzeit vollständig überblickbar.
+- Konflikte treten **pro Patch** auf statt diffus über den Baum.
+- Ein Patch, der sich nicht mehr sauber aufsetzen lässt, ist ein **lautes Signal** — nicht
+  ein stiller Auto-Merge. Das ist die direkte Antwort auf die wichtigste Lektion in AGENTS.md.
+
+### Verifikationskette pro Patch (verbindlich)
+
+Die Reihenfolge ist nicht beliebig — genau diese Kette hätte am 2026-08-03 zwei
+Fehlschlüsse verhindert:
+
+1. `test-backend-ops -o MUL_MAT` — notwendig, aber **nicht hinreichend**: das Gate hat den
+   `nwarps=16`-Fault mit 2/2 durchgewinkt.
+2. `llama-bench` auf einem **echten Modell** — deckt die Shapes ab, die das Gate nicht trifft.
+3. Inferenz-Rauchtest (`llama-cli`, ggf. mit `--spec-type draft-mtp`) — deckt Semantikfehler
+   ab, die weder Gate noch Benchmark sehen.
+
+### Kadenz
+
+Nicht jedem Tag folgen. Ein Release alle zwei bis vier Wochen rebasen genügt; der vorhandene
+self-hosted Workflow `build-self-hosted` kann den Rebase-Build automatisch prüfen.
 
 ---
 
