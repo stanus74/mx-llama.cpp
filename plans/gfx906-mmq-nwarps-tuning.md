@@ -3,7 +3,7 @@
 **Ziel:** Prompt-Processing-Durchsatz (pp) auf gfx906 (MI50/MI60) erhöhen, indem die
 MMQ-`nwarps`-Heuristik über die aktuelle Fork-Einstellung hinaus getunt wird.
 
-**Grundlage:** [docs/gfx906-optimization-notes.md](../docs/gfx906-optimization-notes.md) Teil C
+**Grundlage:** [docs/gfx906/gfx906-optimization-notes.md](../docs/gfx906/gfx906-optimization-notes.md) Teil C
 (llama.cpp Discussion [#23881](https://github.com/ggml-org/llama.cpp/discussions/23881)):
 `nwarps` 4 → 16 brachte **+54 % pp** (Q8, MI60), **+76 %** auf MI50 32 GB, weil die
 `256/warp_size`-Heuristik für non-MFMA-Karten unterdimensioniert ist.
@@ -16,7 +16,7 @@ Performance-Experiment, keine Merge-Korrektur.
 > gebaut, Sweep auf MI50 durchgeführt (Abschnitte 4–6). **Ergebnis: OTHER 4 → 8 = +23 %
 > pp512** (qwen35 9B Q5_K, single GPU, MUL_MAT-Gate 2/2); 16 regressiert (Occupancy-Klippe).
 > Neuer Default `GGML_MMQ_NWARPS_GFX906_OTHER = 8` in mmq.cuh, dokumentiert in
-> docs/gfx906-optimization-notes.md Teil C. Q8-Knopf bleibt 8 (kein Q8-Modell zum Nachmessen).
+> docs/gfx906/gfx906-optimization-notes.md Teil C. Q8-Knopf bleibt 8 (kein Q8-Modell zum Nachmessen).
 > Zusätzlich zum Plan wurde `mmq_get_nwarps_compile_default()` mitgezogen (gfx906 → OTHER),
 > weil load_tiles ohne explizites `nwarps`-Template davon abhängen — sonst Mismatch mit den
 > Launch-Bounds bei angehobenem OTHER-Wert.
@@ -135,7 +135,7 @@ Discussion meldete bei **nwarps=8** einen nicht-deterministischen Fehler bei
 2. Werte als neue Defaults in die Macros eintragen.
 3. **Separater Commit**, nicht in den Merge-Branch-Fixes vermischt — klar rückrollbar.
    Commit-Message mit den Bench-Zahlen (Modell, Quant, pp vorher/nachher, MI50).
-4. In [docs/gfx906-optimization-notes.md](../docs/gfx906-optimization-notes.md) Teil C das
+4. In [docs/gfx906/gfx906-optimization-notes.md](../docs/gfx906/gfx906-optimization-notes.md) Teil C das
    Ergebnis (gemessene MI50-Werte) ergänzen.
 
 ## 7. Risiken / offene Punkte

@@ -9,7 +9,7 @@ Warp-Parallelität im quantisierten Matrixmultiplikations-Kernel (MMQ) angehoben
 |---|---|---|---|---|
 | Qwopus3.6-27B-Coder-Compat-MTP | Q6_K | ~163 t/s | 190.99 ± 0.57 t/s | **+17.3 %** |
 
-Referenzwerte aus einem separaten Sweep (mx-llama.cpp-Fork, `docs/gfx906-optimization-notes.md`):
+Referenzwerte aus einem separaten Sweep (mx-llama.cpp-Fork, `docs/gfx906/gfx906-optimization-notes.md`):
 Q5_K +23 %, Q6_K +19 %, jeweils single-GPU, `nwarps=8` als Sweet Spot (`nwarps=16` regressiert
 durch Occupancy-Klippe). Ursprüngliche Beobachtung: llama.cpp-Discussion
 [#23881](https://github.com/ggml-org/llama.cpp/discussions/23881) (MI60/MI50, bis zu +76 % bei Q8).

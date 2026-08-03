@@ -303,7 +303,7 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 
 // gfx906 (MI50/MI60) MMQ warps-per-block, tunable at compile time.
 // The stock `256/warp_size` heuristic (= 4 warps here) under-utilizes gfx906 CUs on this
-// non-MFMA target; see docs/gfx906-optimization-notes.md Part C and llama.cpp discussion
+// non-MFMA target; see docs/gfx906/gfx906-optimization-notes.md Part C and llama.cpp discussion
 // #23881. Q8_0 was already bumped to 8. Override via -DGGML_MMQ_NWARPS_GFX906_Q8=<N> and
 // -DGGML_MMQ_NWARPS_GFX906_OTHER=<M> to A/B-benchmark other values (rebuild required, since
 // nwarps is constexpr / baked into __launch_bounds__). Host and device heuristics below MUST
@@ -312,8 +312,16 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 // launched block dims.
 // Measured on MI50 (qwen35 9B Q5_K, pp512, single GPU): OTHER 4 -> 8 gives +23% (554 -> 683
 // t/s), 16 regresses to 497 (occupancy cliff); MUL_MAT gate clean 2/2 at 8. So OTHER default
-// is now 8. Q8_0 stays 8 (no Q8 model available to re-sweep; discussion #23881 suggests 16
-// could help Q8 — verify before changing).
+// is now 8.
+// Q8 knob swept 2026-08-03 (Ornith-1.0-9B-Q8_0, pp512, single GPU, 32GB card):
+//   4  -> 572.07 +/- 6.13 t/s   gate 2/2
+//   8  -> 733.96 +/- 7.37 t/s   gate 2/2   (+28.3%, current default)
+//   16 -> CRASHES: "Memory access fault ... Write access to a read-only page" in llama-bench.
+// DO NOT set either knob to 16. Note that test-backend-ops -o MUL_MAT passes 2/2 even at 16 --
+// the gate does not cover the real model's shapes, so it cannot catch this. 16 warps * 64
+// lanes = 1024 threads, i.e. exactly the gfx906 block-size limit; suspect an LDS tile /index
+// overflow at that block geometry. Discussion #23881 suggests 16 helps Q8 on MI60 -- that does
+// NOT transfer to this fork on MI50.
 #ifndef GGML_MMQ_NWARPS_GFX906_Q8
 #define GGML_MMQ_NWARPS_GFX906_Q8    8
 #endif

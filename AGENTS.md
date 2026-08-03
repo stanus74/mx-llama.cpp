@@ -27,7 +27,7 @@ Diese Erweiterungen existieren nur in diesem Fork und müssen bei Upstream-Merge
   Ursache eines GPU-Page-Faults bei `-sm row`. Diese Reste wurden entfernt (siehe MERGE_REPORT.md).
   Für Multi-GPU **`-sm tensor`** verwenden (Fork-eigenes Feature, siehe oben).
 - **`-sm tensor` + MTP crasht bei asymmetrischem VRAM (real reproduziert, siehe
-  [docs/anleitung-opti-gfx906.md](docs/anleitung-opti-gfx906.md) Abschnitt 5.1):** TP erzwingt
+  [docs/gfx906/anleitung-opti-gfx906.md](docs/gfx906/anleitung-opti-gfx906.md) Abschnitt 5.1):** TP erzwingt
   CPU-Sampler-Fallback für den MTP-Draft (`backend sampling not supported with
   SPLIT_MODE_TENSOR`), zusätzlicher Speicherdruck sprengt die kleinere Karte (`ROCm error: out
   of memory`). Konsequenz: **MTP-Modelle → Layer-Split, nicht TP.** TP nur für reine
@@ -36,11 +36,19 @@ Diese Erweiterungen existieren nur in diesem Fork und müssen bei Upstream-Merge
   Split-Pfad, der gleichzeitig MTP-tauglich ist — nur Layer-Split ohne echtes Row-Split innerhalb
   eines Layers.
 - **gfx906-Kernel-Tuning** — Hardware-Details & Optimierungsregeln in
-  [docs/gfx906-optimization-notes.md](docs/gfx906-optimization-notes.md): Teil A ISA/Kernel
+  [docs/gfx906/gfx906-optimization-notes.md](docs/gfx906/gfx906-optimization-notes.md): Teil A ISA/Kernel
   (kein MFMA, nur `v_dot4/8`/`dot2`; LDS-Bank-Padding; KV-Cache `HSD`; FP32-vs-QDQ; Latency-Hiding),
   Teil B operatives Tuning (`upp`-OC, PCIe-Gen-Einfluss auf pp, Fan/Power-Tools), Teil C der
-  **MMQ-`nwarps`-Fund** (Default 4 → 16 ergibt +54 % pp auf gfx906, da `256/warp_size` für
-  non-MFMA-Karten unterdimensioniert ist — mit `test-backend-ops -o MUL_MAT` verifizieren).
+  **MMQ-`nwarps`-Fund**: `256/warp_size` ist für non-MFMA-Karten unterdimensioniert (→ 4 auf
+  gfx906). **Fork-Default ist jetzt 8** (`GGML_MMQ_NWARPS_GFX906_OTHER`/`_Q8` in `mmq.cuh`),
+  eigene Messung auf MI50: `OTHER` +23 % (qwen35 9B Q5_K) bzw. +19 % (27B Q6_K), `Q8` +28 %
+  (Ornith-9B-Q8_0: 572 → 734 t/s, gemessen 2026-08-03). **Niemals auf 16 setzen** — `OTHER`
+  regressiert dort (683 → 497 t/s, Occupancy-Klippe), `Q8` **crasht** die GPU
+  (`Memory access fault … Write access to a read-only page`). Die +54 % aus Discussion #23881
+  gelten für Q8 auf MI60 und übertragen sich nicht. **Achtung:** `test-backend-ops -o MUL_MAT`
+  läuft auch bei 16 sauber durch (2/2) — das Gate deckt die Shapes echter Modelle nicht ab und
+  kann diesen Fehler nicht finden. Jede nwarps-Änderung zusätzlich mit `llama-bench` auf einem
+  echten Modell verifizieren, nicht nur mit dem Gate.
 
 ## Upstream-Merge-Workflow (wichtigste Lektion dieses Repos)
 
