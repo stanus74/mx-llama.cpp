@@ -5,15 +5,15 @@
 // and stream_k enabled for the K-quants only.
 //
 // stream_k is a trade, not a win everywhere. Measured on MI50, pp2048, single GPU, 2026-08-04:
-//                    mainline   nthreads=512   + stream_k
-//   Q5_K_M            581.09       606.51        668.54
-//   Q8_0              684.72       769.43        718.48
-// So K-quants gain ~10% from stream_k while Q8_0 loses ~6%. Since the config is per type,
-// both optima can be had at once: stream_k on for Q2_K..Q6_K, off for everything else.
-// Final: Q5_K_M +15.1%, Q8_0 +12.3% over mainline.
+//                       mainline   nthreads=512   + stream_k    total
+//   Q5_K_M (9B)          581.09       606.51        668.54     +15.1%
+//   Q6_K   (24B)         173.26       228.01        259.85     +50.0%
+//   Q8_0   (9B)          684.72       769.43        718.48     +12.3%
+// K-quants gain 10-14% from stream_k while Q8_0 loses ~6%. Since the config is per type, both
+// optima can be had at once: stream_k on for Q2_K..Q6_K, off for everything else.
 //
-// Only Q5_K and Q8_0 were measured. Q2_K/Q3_K/Q4_K/Q6_K get stream_k by analogy and should be
-// re-checked. occupancy was swept too (1 vs 2) and made no difference.
+// Q5_K, Q6_K and Q8_0 were measured. Q2_K/Q3_K/Q4_K get stream_k by analogy with the two
+// K-quants that were. occupancy was swept too (1 vs 2) and made no difference.
 static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config_gcn5(ggml_type type, int J, bool fallback) {
     CASE(GGML_TYPE_Q1_0, 512, 2, 128,   8, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, false, true);
     CASE(GGML_TYPE_Q1_0, 512, 2, 128,  16, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, false, true);
