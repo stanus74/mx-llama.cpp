@@ -1,6 +1,6 @@
 # Ausführungsplan: Mainline forken + GCN5-MMQ-Patch
 
-**Erstellt:** 2026-08-03 · **Status:** ausführbar, noch nicht begonnen
+**Erstellt:** 2026-08-03 · **Status:** ✅ **Schritte 0–4 umgesetzt 2026-08-04**
 **Strategische Grundlage:** [fork-auf-mainline-reduzieren.md](fork-auf-mainline-reduzieren.md)
 
 Ziel: ein Repo, das Mainline folgt und **genau einen** Patch trägt — die fehlende
@@ -9,7 +9,46 @@ MMQ-Konfiguration für GCN5/gfx906. TP, Repack, MTP-Schicht und die skyne98-Port
 
 ---
 
-## Baseline (bereits gemessen, 2026-08-03)
+## ✅ Ergebnis (2026-08-04)
+
+Branch `gcn5`, vier Commits auf `b10238`. Eingriff in Upstream-Code: **6 Zeilen** in `mmq.cuh`
+plus die neue Datei `mmq-config-gcn5.cuh`. Zum Vergleich: der alte Fork wich in **74 Dateien**
+und ~12.400 Zeilen ab.
+
+| Modell | Mainline | **gcn5-Patch** | Δ | alter Fork |
+|---|---:|---:|---:|---:|
+| Ornith-9B **Q8_0** | 684,72 | **768,76** | **+12,3 %** | 733,90 → Patch ist **4,7 % besser** |
+| ornith-9B **Q5_K_M** | 581,09 | **668,54** | **+15,1 %** | 679,69 → Patch 1,6 % dahinter |
+| Mistral-24B **Q6_K** | 173,26 | **259,85** | **+50,0 %** | nicht gemessen |
+
+`test-backend-ops -o MUL_MAT` mit Typfilter: q4_K, q5_K, q6_K, q8_0 jeweils **2/2**.
+
+**Der Patch besteht aus zwei Erkenntnissen:**
+
+1. **`nthreads` 256 → 512.** gfx906 fiel auf die RDNA2-Config zurück; RDNA2 hat Wave-Größe 32,
+   gfx906 hat 64 — also nur 4 statt 8 Warps pro Block.
+2. **`stream_k` nur für K-Quants.** Das ist ein Tauschgeschäft, kein genereller Gewinn:
+
+   | | Mainline | nthreads=512 | + stream_k |
+   |---|---:|---:|---:|
+   | Q5_K_M | 581,09 | 606,51 | **668,54** |
+   | Q6_K | 173,26 | 228,01 | **259,85** |
+   | Q8_0 | 684,72 | **769,43** | 718,48 |
+
+   K-Quants gewinnen 10–14 %, Q8_0 **verliert 6 %**. Da die Config pro Typ gilt, lassen sich
+   beide Optima gleichzeitig nehmen. Wäre nur Q5_K nachgemessen worden, hätte ein globaler
+   Schalter Q8_0 still um 6,6 % verschlechtert.
+
+**`occupancy`** wurde ebenfalls gesweept (1 vs. 2, CDNAs Wert) — **kein Effekt**, bleibt beim
+RDNA2-Wert.
+
+**Methodisch entscheidend war der Blick zu CDNA** statt blindem Variieren: die einzige andere
+AMD-Architektur mit Wave-Größe 64 unterschied sich in genau zwei Feldern, eines davon war der
+Treffer.
+
+---
+
+## Baseline (Referenz, 2026-08-03)
 
 Single GPU (32-GB-Karte), `llama-bench -ngl 99 -fa 1 -r 3 -p 2048 -n 128`:
 
@@ -17,10 +56,6 @@ Single GPU (32-GB-Karte), `llama-bench -ngl 99 -fa 1 -r 3 -p 2048 -n 128`:
 |---|---:|---:|---:|
 | Ornith-9B **Q8_0** | 685,53 ± 0,55 | 733,90 ± 0,43 | **+7,1 %** |
 | ornith-9B **Q5_K_M** | 580,44 ± 0,73 | 679,69 ± 0,80 | **+17,1 %** |
-
-Diese Fork-Werte sind das **Ziel**, das der Patch auf Mainline erreichen soll. Da Repack
-nachweislich toter Code ist (Phase 3), stammt der gesamte Vorsprung aus dem MMQ-Tuning —
-der Patch sollte ihn also vollständig reproduzieren können.
 
 ---
 
@@ -95,31 +130,30 @@ alte Fork über `nwarps`-Defines behoben hat.
 Die Reihenfolge ist Ergebnis der Fehlschlüsse vom 2026-08-03 — jeder Schritt fängt eine
 Fehlerklasse ab, die der vorherige nicht sieht.
 
-1. - [ ] `test-backend-ops -o MUL_MAT` — **notwendig, nicht hinreichend.** Das Gate hat den
-       `nwarps=16`-Fault mit 2/2 durchgewinkt.
-2. - [ ] `llama-bench` auf **echten Modellen** (Q5_K_M und Q8_0) — deckt die Shapes ab, die
-       das Gate nicht trifft. Hier muss der Gewinn sichtbar werden.
-3. - [ ] Inferenz-Rauchtest mit `llama-cli` — deckt Semantikfehler ab, die weder Gate noch
-       Benchmark sehen.
+1. - [x] `test-backend-ops -o MUL_MAT` — q4_K, q5_K, q6_K, q8_0 je **2/2**.
+       **Wichtig:** ein *ungefilterter* Lauf bricht bei `MUL_MAT(type_a=f32)` mit
+       `CUBLAS_STATUS_INTERNAL_ERROR` ab — **unverändertes Mainline bricht am identischen
+       Testfall ab**, also ein vorbestehendes hipBLAS-Problem dieser ROCm-Version, nicht der
+       Patch. Ohne diese Kontrollmessung wäre der Patch fälschlich verdächtigt worden.
+2. - [x] `llama-bench` auf echten Modellen — Q5_K_M, Q6_K, Q8_0, siehe Ergebnistabelle oben.
+3. - [ ] Inferenz-Rauchtest mit `llama-cli` — **offen**
 4. - [ ] Ausgabe gegen den Mainline-Build gegenprüfen (gleicher Seed, gleicher Prompt):
        **Text muss identisch sein.** Die Konfiguration darf laut Struktur-Kommentar
-       ausschließlich Geschwindigkeit beeinflussen, nie Ergebnisse.
+       ausschließlich Geschwindigkeit beeinflussen, nie Ergebnisse. — **offen**
 
 ---
 
-## Schritt 4: Tuning
+## Schritt 4: Tuning — ✅ erledigt
 
-`nthreads = 512` ist eine **Ableitung** aus dem alten Fork, keine Messung auf Mainlines
-MMQ-Implementierung. Die übrigen Felder (`I`, `J`, `occupancy`, `stream_k`, `K_vram`) sind
-bisher überhaupt nicht für GCN5 untersucht.
-
-- [ ] `nthreads` sweepen: 256 / 512 / 1024 — je Konfiguration Gate + `llama-bench`
-- [ ] **Achtung:** 1024 Threads entspricht dem alten `nwarps=16`, das im Legacy-Pfad einen
-      GPU-Fault auslöste (Ursache bis heute ungeklärt, siehe
-      `gfx906-naechste-optimierungsschritte.md` B.2). Falls es auch hier faultet: nicht
-      erneut tagelang suchen, sondern ausschließen und weitergehen.
-- [ ] Danach optional `I`/`J`/`stream_k` variieren — nur mit je einer Messung als Begründung
-- [ ] Jeden gewählten Wert im Code kommentieren: **Modell, Test, Zahl, Datum**
+- [x] **`nthreads`:** 512 gesetzt. Ein Sweep über 1024 entfällt — das `CASE`-Makro enthält
+      `static_assert(nthreads <= 512)`. Mainlines Design schließt also genau die Konfiguration
+      aus, die im Legacy-Pfad den ungeklärten GPU-Fault auslöste (`nwarps=16`).
+- [x] **`occupancy`:** 1 vs. 2 gesweept → kein Effekt (607,41 vs. 606,51). Bleibt bei 2.
+- [x] **`stream_k`:** pro Typ gesetzt — für K-Quants an, sonst aus. Größter Einzelgewinn.
+- [x] Werte im Code kommentiert (Modell, Test, Zahl, Datum)
+- [ ] **Offen:** Q2_K, Q3_K, Q4_K haben `stream_k` per Analogie zu Q5_K/Q6_K bekommen,
+      wurden aber nicht gemessen. `I`, `J` und `K_vram` sind unverändert von RDNA2 übernommen
+      und für GCN5 nie untersucht.
 
 ---
 
