@@ -1,8 +1,8 @@
-# hipBLAS `Sgemm` stürzt am MoE-Router ab (gfx906, ROCm 6.3.4)
+# `HSA_XNACK=0` fehlt → hipBLAS `Sgemm` stürzt am MoE-Router ab (gfx906)
 
-**Gefunden:** 2026-08-05 · **Status:** Ursache eingegrenzt, Workaround verifiziert
+**Gefunden:** 2026-08-05 · **Status:** Ursache geklärt, Umgebungsfehler
 
-Qwen3.6-35B-A3B-Modelle brechen auf dieser Maschine beim ersten Decode ab:
+Qwen3.6-35B-A3B-Modelle brechen beim Prefill ab:
 
 ```
 ROCm error: CUBLAS_STATUS_INTERNAL_ERROR
@@ -10,92 +10,66 @@ ROCm error: CUBLAS_STATUS_INTERNAL_ERROR
   hipblasSgemm(ctx.cublas_handle(), HIPBLAS_OP_T, HIPBLAS_OP_N, ne01, ne11, ne10, …)
 ```
 
-## Workaround (sofort nutzbar)
+## Ursache: `HSA_XNACK`
+
+Die Karte meldet sich je nach Umgebung mit **zwei verschiedenen Code-Object-Targets**:
+
+| Umgebung | Gerätekennung | Prefill |
+|---|---|---|
+| `HSA_XNACK=0` | `gfx906:sramecc+:**xnack-**` | **läuft** |
+| `HSA_XNACK` nicht gesetzt | `gfx906:sramecc+:**xnack+**` | **Absturz** |
+
+rocBLAS hat für `xnack+` offenbar keine passenden `Sgemm`-Kernel für diese Form und wirft
+`CUBLAS_STATUS_INTERNAL_ERROR`. Mit `xnack-` läuft dieselbe Operation ohne Umweg.
+
+`~/.bashrc` auf `x99` setzt das korrekt (Zeile 142):
 
 ```bash
-export GGML_CUDA_CUBLAS_COMPUTE_TYPE=f16
+export HSA_XNACK=0    # Deaktiviert Memory-Retry (wichtig für Performance)
 ```
 
-Verifiziert auf **beiden** betroffenen Modellen, MI50, eine GPU, voller Benchmark mit Prefill:
+Verifiziert, sonst identischer Aufruf, MI50, eine GPU:
 
-| Modell | pp2048 | tg128 |
-|---|---:|---:|
-| `Ornith-1.0-35B-Heretic-MTP-APEX-I-Balanced` (Q6_K) | 756,85 ± 0,44 | 56,36 ± 0,56 |
-| `Qwopus3.6-35B-A3B-Coder-APEX-MTP-Balanced` (Q5_K_M) | 756,54 ± 1,32 | 56,21 ± 0,44 |
+| Modell | pp512 mit `HSA_XNACK=0` | ohne |
+|---|---:|---|
+| `Qwopus3.6-35B-A3B-Coder-APEX-MTP-Balanced` | **771,51 t/s** | Absturz |
+| `Ornith-1.0-35B-Heretic-MTP-APEX-I-Balanced` | **772,66 t/s** | Absturz |
 
-Ohne die Variable brechen beide ab. Rauchtest mit `llama-cli` ebenfalls sauber: kohärenter Text,
-54,7 t/s Generierung — die Umstellung auf F16-Compute beschädigt die Ausgabe nicht sichtbar.
+## ⚠ Falle: nicht-interaktive SSH-Sitzungen
 
-> ⚠ **`export` benutzen, nicht `env VAR=… llama-cli`.** `llama-cli` startet seit `b10240` einen
-> Server-Subprozess, der die im Prefix gesetzte Variable **nicht** sieht. Mit `env HIP_VISIBLE_DEVICES=1`
-> landete das 24-GB-Modell dadurch auf der 16-GB-Karte und starb mit
-> `cudaMalloc failed: out of memory`, obwohl die 32-GB-Karte leer war. `llama-bench` ist nicht
-> betroffen, der startet keinen Subprozess.
+**`ssh host 'befehl'` liest die `.bashrc` nicht.** Ein Kommando, das im Login-Shell einwandfrei
+läuft, landet über SSH in einer völlig anderen GPU-Umgebung — hier fehlten `HSA_XNACK`,
+`HSA_OVERRIDE_GFX_VERSION`, `HSA_P2P_DISABLE` und `HIP_FORCE_P2P_DISABLE` allesamt.
 
-⚠ Der Schalter ist **global**: er stellt *jeden* cuBLAS-Matmul auf F16-Compute um, nicht nur den
-betroffenen. Für den Router ist das unkritisch, für andere F32-Pfade eine Genauigkeitsänderung.
-Als Dauerlösung gehört die Fallunterscheidung in den Code, nicht in die Umgebung.
+Für reproduzierbare Messungen über SSH die Variablen **explizit mitgeben** oder
+`source ~/.bashrc` voranstellen. Ein `env | grep -i hsa` am Anfang einer Messreihe hätte den
+gesamten Irrweg unten erspart.
 
-## Ursache
+## Was dabei fälschlich als Ursache dokumentiert wurde
 
-Die abstürzende Operation ist der **MoE-Router** (`ffn_gate_inp`). Der ist F32, geht deshalb nicht
-über MMQ, sondern über `ggml_cuda_mul_mat_cublas` → `hipblasSgemm`. hipBLAS dieser ROCm-Version
-verträgt die Form nicht.
+Die erste Fassung dieses Dokuments erklärte den Absturz als **formabhängigen hipBLAS-Fehler** am
+MoE-Router (`ffn_gate_inp`, F32, 2048×256) und empfahl `GGML_CUDA_CUBLAS_COMPUTE_TYPE=f16` als
+Workaround. Das war falsch — oder genauer: es beschrieb korrekt, *wo* es knallt, aber nicht *warum*.
 
-Tensorformen je Modell (`gguf-py`, F32-Tensoren mit ≥2 Dimensionen):
+Die Beobachtungen von damals bleiben gültig und erklären sich jetzt zwanglos:
 
-| Modell | `ffn_gate_inp` | Ergebnis |
-|---|---|---|
-| `Qwopus3.6-35B-A3B-Coder-APEX-MTP-Balanced` | **[2048, 256]** | Absturz |
-| `Ornith-1.0-35B-Heretic-MTP-APEX-I-Balanced` | **[2048, 256]** | Absturz |
-| `gemma-4-26B-A4B-it-UD-Q6_K_XL` | [2816, 128] | läuft |
-| `Qwopus3.6-27B-Coder-Compat-MTP-Q6_K` | *kein Router (dicht)* | läuft |
+- **Nur die 35B-A3B-Modelle betroffen, gemma-26B-A4B nicht.** Formabhängig ist es tatsächlich —
+  aber nur, weil unter `xnack+` bestimmte Kernel fehlen, nicht weil hipBLAS die Form generell
+  nicht kann.
+- **Nur Prefill, nicht Generierung.** Bei Batch 1 ist der Router ein Matvec und geht über `mmvf`,
+  also gar nicht durch rocBLAS.
+- **`GGML_CUDA_CUBLAS_COMPUTE_TYPE=f16` half.** Es weicht auf einen anderen rocBLAS-Kernel aus, der
+  auch unter `xnack+` existiert. Es ist damit **überflüssig und obendrein langsamer**: 756 t/s
+  gegen 771 t/s mit korrekter Umgebung — bei gleichzeitig schlechterer Genauigkeit für *alle*
+  cuBLAS-Matmuls. **Nicht verwenden.**
+- **Alter Fork stürzte genauso ab.** Klar — er lief in derselben kaputten SSH-Umgebung.
 
-Es ist also **formabhängig**, nicht MoE-abhängig: gemmas Router mit 128 Experten geht durch, der
-mit 256 nicht.
+## Lehre
 
-## Nur Prefill, nicht Generierung
+Der Fehler wurde über mehrere Runden immer präziser eingegrenzt — Modell, Tensorform, Batch-Größe —
+und lag die ganze Zeit außerhalb des untersuchten Bereichs. Alle Kontrollmessungen (q8_1-Cache aus,
+alter Fork, GPU leer, eine vs. zwei Karten) waren korrekt und haben korrekt ausgeschlossen, was sie
+ausschließen sollten; sie liefen nur alle in derselben falschen Umgebung.
 
-Entscheidend für die Frage „das lief doch schon mal": **Token-Generierung ist nicht betroffen.**
-
-| Aufruf | Batch | Ergebnis (`Ornith-1.0-35B`) |
-|---|---|---|
-| `-p 0 -n 32` | 1 | **läuft, 50,80 t/s** |
-| `-p 128` | 128 | Absturz |
-| `-p 512` | 512 | Absturz |
-| `-p 2048` | 2048 | Absturz |
-
-Bei einem einzelnen Token ist der Router ein Matvec und geht über `mmvf`; erst ab mehreren Tokens
-wird daraus ein echtes GEMM und landet in `hipblasSgemm`. Ein Modell kann sich also im Alltag
-lange unauffällig verhalten — Generierung läuft, kurze Prompts fallen nicht auf — und erst beim
-Prefill eines längeren Prompts umfallen.
-
-## Was ausgeschlossen wurde
-
-Jede dieser Möglichkeiten wurde einzeln geprüft und widerlegt:
-
-- **Der GCN5-MMQ-Patch.** Der betrifft nur den MMQ-Pfad für quantisierte Gewichte; der Router ist
-  F32 und läuft an MMQ vorbei.
-- **Der q8_1-Cache.** Mit `GGML_CUDA_Q8_1_CACHE=0` identischer Absturz — geprüft für *beide*
-  betroffenen Modelle, nicht nur eines.
-- **Eine Regression durch Mainline.** Der alte Fork (`445cf9bdd`, `/opt/mx-llama.cpp`) stürzt an
-  derselben Stelle ab (`ggml_cuda_mul_mat_cublas`).
-- **Speicherdruck / Hintergrundprozess.** GPU nachweislich leer (10 MB belegt von 32 GB), keine
-  llama-Prozesse; Absturz unverändert.
-- **GPU-Anzahl.** Mit einer wie mit zwei Karten identisch.
-
-## Zusammenhang mit Schritt 3.1 des GCN5-Plans
-
-Dies ist dieselbe Fehlerklasse, die ein *ungefilterter* `test-backend-ops -o MUL_MAT`-Lauf bei
-`MUL_MAT(type_a=f32)` zeigt und die dort gegen unverändertes Mainline als vorbestehendes
-hipBLAS-Problem eingestuft wurde. Neu ist: **es ist kein Test-Artefakt.** Der Defekt macht reale
-Modelle unbenutzbar.
-
-## Offene Fäden
-
-- Welche Dimension genau kippt es — die 256 (Expertenzahl) oder die 2048? Ein Sweep über
-  `test-backend-ops`-Formen würde das klären.
-- Tritt es unter neueren ROCm-Versionen noch auf? gfx906 ist ab ROCm 7.x deprecated, ein Update
-  ist also kein sicherer Ausweg.
-- Saubere Lösung wäre, kleine F32-Matmuls dieser Form nicht an hipBLAS zu geben. Das wäre ein
-  Upstream-Beitrag mit klarem Reproduzierer.
+**Konsequenz für künftige Messungen:** die Umgebung gehört zum Messaufbau und muss protokolliert
+werden, nicht nur die Kommandozeile.
