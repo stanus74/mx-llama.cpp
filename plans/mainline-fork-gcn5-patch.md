@@ -1,6 +1,6 @@
 # Ausführungsplan: Mainline forken + GCN5-MMQ-Patch
 
-**Erstellt:** 2026-08-03 · **Status:** Schritte 0–4 umgesetzt (2026-08-04) · Schritt 6 neu (2026-08-05)
+**Erstellt:** 2026-08-03 · **Status:** Schritte 0–4 erledigt (3.3/3.4 am 2026-08-05) · Schritt 6 offen
 **Strategische Grundlage:** [fork-auf-mainline-reduzieren.md](fork-auf-mainline-reduzieren.md)
 
 Ziel: ein Repo, das Mainline folgt und **genau einen** Patch trägt — die fehlende
@@ -136,10 +136,48 @@ Fehlerklasse ab, die der vorherige nicht sieht.
        Testfall ab**, also ein vorbestehendes hipBLAS-Problem dieser ROCm-Version, nicht der
        Patch. Ohne diese Kontrollmessung wäre der Patch fälschlich verdächtigt worden.
 2. - [x] `llama-bench` auf echten Modellen — Q5_K_M, Q6_K, Q8_0, siehe Ergebnistabelle oben.
-3. - [ ] Inferenz-Rauchtest mit `llama-cli` — **offen**
-4. - [ ] Ausgabe gegen den Mainline-Build gegenprüfen (gleicher Seed, gleicher Prompt):
-       **Text muss identisch sein.** Die Konfiguration darf laut Struktur-Kommentar
-       ausschließlich Geschwindigkeit beeinflussen, nie Ergebnisse. — **offen**
+3. - [x] Inferenz-Rauchtest mit `llama-cli` (2026-08-05) — kohärenter Text, sauberer Exit,
+       46,5 t/s Generation auf Q5_K_M.
+       **Fallstrick:** `llama-cli` ist seit `b10240` eine Chat-UI. Ohne `-st`/`--single-turn`
+       läuft sie über SSH (kein TTY) in eine Endlosschleife und schrieb 735 MB `> `-Prompts,
+       bevor sie gestoppt wurde. Für Skripte immer `-no-cnv -st </dev/null` **plus** einen
+       `head -c`-Deckel. `-no-cnv` allein genügt nicht.
+4. - [x] Ausgabevergleich gegen Mainline (2026-08-05) — **Host/Device-Konsistenz belegt, aber
+       nicht über Bit-Identität.** Siehe Abschnitt unten.
+
+---
+
+### Schritt 3.4 im Detail: Warum „Text identisch" das falsche Kriterium war
+
+Aufbau: gleicher Worktree, `mmq.cuh` per `git checkout d5b7227c9 -- …` auf den Stand vor dem
+Patch gesetzt, neu gebaut, gemessen, danach wiederhergestellt. Ein dritter Worktree schied aus
+(nur 21 GB frei). Lauf jeweils `-s 1234 --temp 0 --top-k 1 -n 128`, identischer Prompt.
+
+| Quant | `stream_k` | Mainline vs. gcn5 |
+|---|---|---|
+| **Q8_0** | `false` | **identisch, Zeichen für Zeichen** |
+| **Q5_K_M** | `true` | weicht ab Zeile 8 ab |
+
+**Kontrollmessung zuerst:** derselbe Build zweimal → identische Ausgabe. Die Abweichung stammt
+also wirklich aus der Config und nicht aus Nichtdeterminismus.
+
+**Damit ist die Ursache exakt isoliert.** `nthreads = 512` ist bit-exakt — Q8_0 durchläuft
+denselben Patch und ändert nichts. Es hängt allein an `stream_k`: Stream-K zerlegt die
+K-Dimension auf mehrere Blöcke und summiert Teilergebnisse zusammen. Andere Summationsreihenfolge
+→ andere Gleitkomma-Rundung → bei Greedy-Decoding kippt ein knappes Token-Rennen anders.
+
+**Das ist kein Host/Device-Divergenzfehler**, also nicht die Klasse, die dieser Schritt fangen
+sollte. Ein solcher Fehler erzeugt Müll, NaNs oder einen Fault — nicht ein Synonym in einer sonst
+sauberen, thematisch korrekten Antwort. Und er würde Q8_0 nicht verschonen.
+
+**Das Kriterium war zu wörtlich formuliert.** Der Struct-Kommentar in `mmq.cuh` (~Z. 163) sagt
+`// Should not affect results, only speed/…` — „**should** not", nicht „does not", und `stream_k`
+steht selbst in genau diesem Struct. Bit-Identität kann diese Config gar nicht zusichern; gemeint
+ist Korrektheit, nicht Reproduzierbarkeit auf Zeichenebene.
+
+- [ ] **Rest-Offen:** Für die K-Quants fehlt ein Kriterium *mit Toleranz* statt Identität —
+      Perplexity-Vergleich Mainline vs. gcn5. Promille-Abweichung → erledigt; sichtbare
+      Abweichung → doch ein Rechenfehler. Braucht ein Testkorpus (z. B. `wikitext-2-raw`).
 
 ---
 
