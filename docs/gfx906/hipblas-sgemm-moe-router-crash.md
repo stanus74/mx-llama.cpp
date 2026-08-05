@@ -41,13 +41,30 @@ Tensorformen je Modell (`gguf-py`, F32-Tensoren mit ≥2 Dimensionen):
 Es ist also **formabhängig**, nicht MoE-abhängig: gemmas Router mit 128 Experten geht durch, der
 mit 256 nicht.
 
+## Nur Prefill, nicht Generierung
+
+Entscheidend für die Frage „das lief doch schon mal": **Token-Generierung ist nicht betroffen.**
+
+| Aufruf | Batch | Ergebnis (`Ornith-1.0-35B`) |
+|---|---|---|
+| `-p 0 -n 32` | 1 | **läuft, 50,80 t/s** |
+| `-p 128` | 128 | Absturz |
+| `-p 512` | 512 | Absturz |
+| `-p 2048` | 2048 | Absturz |
+
+Bei einem einzelnen Token ist der Router ein Matvec und geht über `mmvf`; erst ab mehreren Tokens
+wird daraus ein echtes GEMM und landet in `hipblasSgemm`. Ein Modell kann sich also im Alltag
+lange unauffällig verhalten — Generierung läuft, kurze Prompts fallen nicht auf — und erst beim
+Prefill eines längeren Prompts umfallen.
+
 ## Was ausgeschlossen wurde
 
 Jede dieser Möglichkeiten wurde einzeln geprüft und widerlegt:
 
 - **Der GCN5-MMQ-Patch.** Der betrifft nur den MMQ-Pfad für quantisierte Gewichte; der Router ist
   F32 und läuft an MMQ vorbei.
-- **Der q8_1-Cache.** Mit `GGML_CUDA_Q8_1_CACHE=0` identischer Absturz.
+- **Der q8_1-Cache.** Mit `GGML_CUDA_Q8_1_CACHE=0` identischer Absturz — geprüft für *beide*
+  betroffenen Modelle, nicht nur eines.
 - **Eine Regression durch Mainline.** Der alte Fork (`445cf9bdd`, `/opt/mx-llama.cpp`) stürzt an
   derselben Stelle ab (`ggml_cuda_mul_mat_cublas`).
 - **Speicherdruck / Hintergrundprozess.** GPU nachweislich leer (10 MB belegt von 32 GB), keine
