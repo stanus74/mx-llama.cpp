@@ -253,10 +253,32 @@ dispatch above"): Lane dispatch allein ist sehr wohl portierbar.
       Ursache laut Commit-Message: *„a bf16 GEMM picks a 64x32x8 macro-tile and runs 3.5x slower
       than the F32 path on the same weights"*. Betrifft **alle** AMD-Karten vor CDNA/RDNA3, nicht nur
       gfx906 → besserer Upstream-PR-Kandidat als der MMQ-Patch selbst.
-- [ ] **2. q8_1-Cache (`775a8051f`) — faktisch der erste Schritt.** Backend-generisch, laut Original
-      +2,2–2,6 % Prefill und Decode, abschaltbar über `GGML_CUDA_Q8_1_CACHE=0`. Wirkt auf **jedes**
-      quantisierte Modell, also auf den gesamten vorhandenen Bestand — im Gegensatz zu BF16 hier
-      auch tatsächlich messbar.
+- [x] **2. q8_1-Cache (`775a8051f`) — übernommen 2026-08-05** als `77dad37f6`. Cherry-Pick, einziger
+      Konflikt war `FEATURES.md` (trägt dieser Branch nicht); alle vier Quelldateien mergten
+      automatisch. 175 Zeilen.
+
+      **Korrektheit:** Greedy-Ausgabe Q8_0 **und** Q5_K_M zeichengleich mit/ohne Cache — die
+      Bit-Exaktheit des Autors ist auf gfx906 reproduziert. Anders als `stream_k` verschiebt dieser
+      Patch keine Rundung.
+
+      **Nutzen (MI50, 1 GPU, `-r 3`, A/B über `GGML_CUDA_Q8_1_CACHE`):**
+
+      | | Cache aus | Cache an | Δ |
+      |---|---:|---:|---:|
+      | Q5_K_M pp2048 | 665,82 ± 0,49 | 671,14 ± 1,24 | **+0,80 %** |
+      | Q5_K_M tg128 | 46,32 ± 0,32 | 46,98 ± 0,17 | **+1,42 %** |
+      | Q8_0 pp2048 | 769,67 ± 0,64 | 773,70 ± 0,74 | **+0,52 %** |
+      | Q8_0 tg128 | 49,39 ± 0,16 | 49,92 ± 0,17 | **+1,07 %** |
+
+      Alle vier Differenzen liegen außerhalb der Streuung, sind also echt — aber es sind
+      **+0,5–1,4 % statt der angegebenen +2,2–2,6 %.** Der Autor hat auf **4 GPUs und einem
+      MoE-Modell** gemessen; bei MoE teilen sich Router *und* Gate/Up dieselbe `ffn_norm`, es gibt
+      dort also mehr wiederverwendbare Quantisierungen als in einem dichten 9B auf einer Karte.
+      **Zweiter Beleg dafür, fremde Prozentzahlen nicht ungeprüft zu übernehmen** — diesmal stimmte
+      die Richtung, nur nicht die Größe.
+
+      - [ ] Offen: Gegenmessung auf einem MoE-Modell (`Qwopus3.6-35B-A3B`, `gemma-4-26B-A4B`),
+            wo der Patch laut Herleitung deutlich mehr bringen müsste.
 - [ ] **3. Lane dispatch (`5d9efc8ca`)** — **nur wenn der Server real `-sm tensor` über ≥2 GPUs fährt.**
       Laut Original +32 % TG auf 8 GPUs, +2,5 % auf 4, Prefill flat; inert bei einer GPU.
       **Das ist zugleich die Vorbedingung für Schritt 5:** dort fällt `-tps` weg, ohne dass der
