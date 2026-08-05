@@ -1,6 +1,6 @@
 # Ausführungsplan: Mainline forken + GCN5-MMQ-Patch
 
-**Erstellt:** 2026-08-03 · **Status:** ✅ **Schritte 0–4 umgesetzt 2026-08-04**
+**Erstellt:** 2026-08-03 · **Status:** Schritte 0–4 umgesetzt (2026-08-04) · Schritt 6 neu (2026-08-05)
 **Strategische Grundlage:** [fork-auf-mainline-reduzieren.md](fork-auf-mainline-reduzieren.md)
 
 Ziel: ein Repo, das Mainline folgt und **genau einen** Patch trägt — die fehlende
@@ -163,11 +163,66 @@ Fehlerklasse ab, die der vorherige nicht sieht.
 - [ ] Rauchtests: `llama-server` mit einem Alltagsmodell, `-sm tensor` für Multi-GPU
 - [ ] **`-tps` fällt weg** → Multi-GPU läuft künftig über upstreams `-sm tensor`.
       Startskripte und Doku entsprechend anpassen.
+      ⚠ **Blockiert durch Schritt 6.3:** Ohne den Lane-Dispatch-Patch kostet das bei 8 GPUs
+      möglicherweise bis zu 32 % Token-Generierung. Erst gegenmessen, dann umstellen.
 - [ ] **MTP:** upstreams Basis bleibt nutzbar (`--spec-type draft-mtp`), nur die
       Fork-Optimierung (`LLAMA_ENABLE_MTP_OPT`) entfällt → ~19 % Prefill weniger bei
       MTP-Workloads. Vor der endgültigen Umstellung mit dem realen Server-Workload gegenmessen.
 - [ ] AGENTS.md neu fassen: der Abschnitt „Fork-spezifische Features" schrumpft auf den
       GCN5-Patch
+
+---
+
+## Schritt 6: Nicht bewertete Patches aus dem Original-Fork (2026-08-05)
+
+**Die Fork-Kette war bis hierher falsch angenommen.** Sie lautet:
+
+`ggerganov/llama.cpp` → **`mxxm-t/mx-llama.cpp`** (Original) → `DENEB1312/mx-llama.cpp`
+→ `stanus74/mx-llama.cpp` (`origin`)
+
+`origin/master` steht auf dem **2026-07-06**, DENEB1312 auf dem **15.07.** Das Original ist seither
+weitergezogen und hat vier Features, die der Strategieplan **nie bewertet hat** — sie waren zum
+Zeitpunkt der Analyse schlicht nicht im Baum. Remotes dafür sind lokal angelegt: `mxorig`, `deneb`.
+
+| Patch | Commit (`mxorig`) | Code-Zeilen | auf `gcn5` portierbar? |
+|---|---|---:|---|
+| BF16→F32 auf AMD ohne natives bf16 | `81a8712d0` (30.07.) | **14** | ✅ abhängigkeitsfrei |
+| q8_1-Cache (quantized activation reuse) | `775a8051f` (04.08.) | 185 | ✅ reine CUDA-Dateien |
+| Concurrent lane dispatch | `5d9efc8ca` (04.08.) | 223 | ✅ nur `ggml-backend-meta.cpp` (Upstream-Datei) |
+| Whole-token graph capture | `751b6114c` (04.08.) | 561 | ❌ fasst `tp-allreduce.cu/.cuh` an |
+
+**Entscheidend:** Der Token-Graph-Patch braucht das Custom-AllReduce-Subsystem, das dieser Plan
+begründet verworfen hat — er ist ohne Rückholung von TP nicht übernehmbar. Die Trennlinie verläuft
+damit **anders als in der `FEATURES.md` des Originals behauptet** („requires the concurrent lane
+dispatch above"): Lane dispatch allein ist sehr wohl portierbar.
+
+### Reihenfolge
+
+- [ ] **1. BF16 (`81a8712d0`) — zuerst.** Der Diff ist ein `else if`, symmetrisch zum bereits
+      vorhandenen F16-Zweig in [ggml-cuda.cu](../ggml/src/ggml-cuda/ggml-cuda.cu) (`ggml_cuda_mul_mat_cublas`,
+      ~Z. 1620): F16 hat einen Hardware-Fallback, **BF16 hat keinen**, also geht ein bf16-Tensor auf
+      gfx906 ungebremst an rocBLAS. Dazu ein 10-Zeilen-Helper `fast_bf16_hardware_available()`.
+      Ursache laut Commit-Message: *„a bf16 GEMM picks a 64x32x8 macro-tile and runs 3.5x slower
+      than the F32 path on the same weights"*. Betrifft **alle** AMD-Karten vor CDNA/RDNA3, nicht nur
+      gfx906 → besserer Upstream-PR-Kandidat als der MMQ-Patch selbst.
+- [ ] **2. q8_1-Cache (`775a8051f`).** Backend-generisch, laut Original +2,2–2,6 % Prefill und Decode,
+      abschaltbar über `GGML_CUDA_Q8_1_CACHE=0`.
+- [ ] **3. Lane dispatch (`5d9efc8ca`)** — **nur wenn der Server real `-sm tensor` über ≥2 GPUs fährt.**
+      Laut Original +32 % TG auf 8 GPUs, +2,5 % auf 4, Prefill flat; inert bei einer GPU.
+      **Das ist zugleich die Vorbedingung für Schritt 5:** dort fällt `-tps` weg, ohne dass der
+      TG-Verlust je gemessen wurde. Bei 8 GPUs stehen bis zu 32 % im Raum — mehr als der gesamte
+      MMQ-Gewinn.
+- [ ] **4. Token graph (`751b6114c`)** — streichen, solange `gcn5` ohne TP-AllReduce bleibt.
+
+Damit wüchse `gcn5` von 6 auf grob 420 Zeilen — zwei Größenordnungen unter den ~12.400 des alten
+Forks, jeder Teil einzeln begründet und per Env-Var abschaltbar.
+
+> ⚠ **Die Prozentzahlen sind Behauptungen eines fremden Repos, bis sie auf der eigenen Hardware
+> nachgemessen sind.** Präzedenzfall: Repack war in diesem Fork dokumentiert und nachweislich toter
+> Code (Phase 3). Das gilt besonders für die +32 %, an denen die Multi-GPU-Entscheidung hängt.
+
+Zwei Punkte der `FEATURES.md` sind ohnehin schon Mainline: `--load-mode dio` und der Schalter
+`GGML_CUDA_CUBLAS_COMPUTE_TYPE`. Wirklich fork-exklusiv ist nur `-tps`.
 
 ---
 
