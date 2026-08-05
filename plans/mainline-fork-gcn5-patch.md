@@ -277,8 +277,21 @@ dispatch above"): Lane dispatch allein ist sehr wohl portierbar.
       **Zweiter Beleg dafür, fremde Prozentzahlen nicht ungeprüft zu übernehmen** — diesmal stimmte
       die Richtung, nur nicht die Größe.
 
-      - [ ] Offen: Gegenmessung auf einem MoE-Modell (`Qwopus3.6-35B-A3B`, `gemma-4-26B-A4B`),
-            wo der Patch laut Herleitung deutlich mehr bringen müsste.
+      - [x] **MoE-Gegenmessung (2026-08-05): Hypothese widerlegt.** `gemma-4-26B-A4B-it-UD-Q6_K_XL`,
+            gleiche Bedingungen: pp2048 926,35 ± 3,36 → 929,78 ± 3,00 (**+0,37 %, im Rauschen**),
+            tg128 67,34 ± 0,39 → 68,25 ± 0,34 (**+1,35 %**). MoE bringt also **nicht** mehr als das
+            dichte 9B (+1,42 % tg dort). Die Erklärung „MoE teilt sich mehr Aktivierungen" trägt
+            nicht — der Abstand zu den +2,6 % des Autors kommt offenbar von dessen **4-GPU-Setup**,
+            nicht von der Modellarchitektur. Auf einer Karte ist der Patch ein knappes Prozent.
+
+      > ⚠ **Nebenbefund: `Qwopus3.6-35B-A3B-Coder-APEX-MTP-Balanced` läuft auf dieser Maschine
+      > gar nicht.** Abbruch mit `ROCm error: CUBLAS_STATUS_INTERNAL_ERROR` in `hipblasSgemm`
+      > (`ggml-cuda.cu:1557`). **Nicht der Patch:** mit `GGML_CUDA_Q8_1_CACHE=0` identischer
+      > Absturz, und der F32-Sgemm-Pfad wird vom GCN5-Patch nicht berührt. Es ist dieselbe
+      > Fehlerklasse wie beim ungefilterten `test-backend-ops` (Schritt 3.1), die dort gegen
+      > unverändertes Mainline als vorbestehendes hipBLAS-Problem dieser ROCm-Version belegt
+      > wurde. Neu ist nur der Befund, dass der Defekt kein Test-Artefakt ist, sondern ein reales
+      > Modell unbenutzbar macht. Eigene Untersuchung wert, unabhängig von diesem Plan.
 - [ ] **3. Lane dispatch (`5d9efc8ca`)** — **nur wenn der Server real `-sm tensor` über ≥2 GPUs fährt.**
       Laut Original +32 % TG auf 8 GPUs, +2,5 % auf 4, Prefill flat; inert bei einer GPU.
       **Das ist zugleich die Vorbedingung für Schritt 5:** dort fällt `-tps` weg, ohne dass der
