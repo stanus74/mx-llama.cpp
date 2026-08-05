@@ -16,8 +16,21 @@ ROCm error: CUBLAS_STATUS_INTERNAL_ERROR
 export GGML_CUDA_CUBLAS_COMPUTE_TYPE=f16
 ```
 
-Verifiziert auf `Qwopus3.6-35B-A3B-Coder-APEX-MTP-Balanced`, MI50, eine GPU:
-**pp512 764,84 t/s, tg32 51,84 t/s** — ohne die Variable Absturz.
+Verifiziert auf **beiden** betroffenen Modellen, MI50, eine GPU, voller Benchmark mit Prefill:
+
+| Modell | pp2048 | tg128 |
+|---|---:|---:|
+| `Ornith-1.0-35B-Heretic-MTP-APEX-I-Balanced` (Q6_K) | 756,85 ± 0,44 | 56,36 ± 0,56 |
+| `Qwopus3.6-35B-A3B-Coder-APEX-MTP-Balanced` (Q5_K_M) | 756,54 ± 1,32 | 56,21 ± 0,44 |
+
+Ohne die Variable brechen beide ab. Rauchtest mit `llama-cli` ebenfalls sauber: kohärenter Text,
+54,7 t/s Generierung — die Umstellung auf F16-Compute beschädigt die Ausgabe nicht sichtbar.
+
+> ⚠ **`export` benutzen, nicht `env VAR=… llama-cli`.** `llama-cli` startet seit `b10240` einen
+> Server-Subprozess, der die im Prefix gesetzte Variable **nicht** sieht. Mit `env HIP_VISIBLE_DEVICES=1`
+> landete das 24-GB-Modell dadurch auf der 16-GB-Karte und starb mit
+> `cudaMalloc failed: out of memory`, obwohl die 32-GB-Karte leer war. `llama-bench` ist nicht
+> betroffen, der startet keinen Subprozess.
 
 ⚠ Der Schalter ist **global**: er stellt *jeden* cuBLAS-Matmul auf F16-Compute um, nicht nur den
 betroffenen. Für den Router ist das unkritisch, für andere F32-Pfade eine Genauigkeitsänderung.
