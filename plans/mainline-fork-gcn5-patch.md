@@ -236,15 +236,27 @@ dispatch above"): Lane dispatch allein ist sehr wohl portierbar.
 
 ### Reihenfolge
 
-- [ ] **1. BF16 (`81a8712d0`) — zuerst.** Der Diff ist ein `else if`, symmetrisch zum bereits
+> ⚠ **Messung 2026-08-05: BF16 ist für diesen Modellbestand wirkungslos.** Alle 14 GGUFs unter
+> `~/data/models` geprüft (`gguf-py`, Tensortyp-Histogramm): **null BF16-Tensoren**, auch in den
+> UD-/`*_XL`-Quants (`gemma-4-26B-A4B-it-UD-Q6_K_XL` 0/658, `gemma-4-31B-it-UD-Q6_K_XL` 0/833,
+> `Qwen3-Coder-Next-UD-IQ4_XS` 0/843). Die nicht-quantisierten Tensoren sind **F32**. Der Patch
+> prüft `compute_type == BF16` und feuert hier nie. Die „+18–19 % Prefill auf UD/`*_XL`" aus der
+> `FEATURES.md` des Originals gelten für anders gepackte UD-Quants als die vorhandenen.
+> **Konsequenz:** BF16 rutscht von Platz 1 auf zuletzt und bleibt nur als Upstream-PR interessant
+> — die Lücke im GEMM-Pfad ist real, nur lokal nicht messbar. Reihenfolge daher: **q8_1-Cache
+> zuerst**, dann Lane dispatch.
+
+- [ ] **1. BF16 (`81a8712d0`) — nur als Upstream-PR, kein lokaler Nutzen.** Der Diff ist ein `else if`, symmetrisch zum bereits
       vorhandenen F16-Zweig in [ggml-cuda.cu](../ggml/src/ggml-cuda/ggml-cuda.cu) (`ggml_cuda_mul_mat_cublas`,
       ~Z. 1620): F16 hat einen Hardware-Fallback, **BF16 hat keinen**, also geht ein bf16-Tensor auf
       gfx906 ungebremst an rocBLAS. Dazu ein 10-Zeilen-Helper `fast_bf16_hardware_available()`.
       Ursache laut Commit-Message: *„a bf16 GEMM picks a 64x32x8 macro-tile and runs 3.5x slower
       than the F32 path on the same weights"*. Betrifft **alle** AMD-Karten vor CDNA/RDNA3, nicht nur
       gfx906 → besserer Upstream-PR-Kandidat als der MMQ-Patch selbst.
-- [ ] **2. q8_1-Cache (`775a8051f`).** Backend-generisch, laut Original +2,2–2,6 % Prefill und Decode,
-      abschaltbar über `GGML_CUDA_Q8_1_CACHE=0`.
+- [ ] **2. q8_1-Cache (`775a8051f`) — faktisch der erste Schritt.** Backend-generisch, laut Original
+      +2,2–2,6 % Prefill und Decode, abschaltbar über `GGML_CUDA_Q8_1_CACHE=0`. Wirkt auf **jedes**
+      quantisierte Modell, also auf den gesamten vorhandenen Bestand — im Gegensatz zu BF16 hier
+      auch tatsächlich messbar.
 - [ ] **3. Lane dispatch (`5d9efc8ca`)** — **nur wenn der Server real `-sm tensor` über ≥2 GPUs fährt.**
       Laut Original +32 % TG auf 8 GPUs, +2,5 % auf 4, Prefill flat; inert bei einer GPU.
       **Das ist zugleich die Vorbedingung für Schritt 5:** dort fällt `-tps` weg, ohne dass der
