@@ -291,7 +291,10 @@ dispatch above"): Lane dispatch allein ist sehr wohl portierbar.
       > Fehlerklasse wie beim ungefilterten `test-backend-ops` (Schritt 3.1), die dort gegen
       > unverändertes Mainline als vorbestehendes hipBLAS-Problem dieser ROCm-Version belegt
       > wurde. Neu ist nur der Befund, dass der Defekt kein Test-Artefakt ist, sondern ein reales
-      > Modell unbenutzbar macht. Eigene Untersuchung wert, unabhängig von diesem Plan.
+      > Modell unbenutzbar macht. **Nachverfolgt und eingegrenzt:** es ist der MoE-Router
+      > (`ffn_gate_inp`, F32, Form 2048×256), Workaround `GGML_CUDA_CUBLAS_COMPUTE_TYPE=f16`
+      > verifiziert. Vollständig dokumentiert in
+      > [docs/gfx906/hipblas-sgemm-moe-router-crash.md](../docs/gfx906/hipblas-sgemm-moe-router-crash.md).
 - [ ] **3. Lane dispatch (`5d9efc8ca`)** — **nur wenn der Server real `-sm tensor` über ≥2 GPUs fährt.**
       Laut Original +32 % TG auf 8 GPUs, +2,5 % auf 4, Prefill flat; inert bei einer GPU.
       **Das ist zugleich die Vorbedingung für Schritt 5:** dort fällt `-tps` weg, ohne dass der
