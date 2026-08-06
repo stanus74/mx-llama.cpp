@@ -189,9 +189,27 @@ ist Korrektheit, nicht Reproduzierbarkeit auf Zeichenebene.
 - [x] **`occupancy`:** 1 vs. 2 gesweept → kein Effekt (607,41 vs. 606,51). Bleibt bei 2.
 - [x] **`stream_k`:** pro Typ gesetzt — für K-Quants an, sonst aus. Größter Einzelgewinn.
 - [x] Werte im Code kommentiert (Modell, Test, Zahl, Datum)
+- [x] **`I`: gesweept 2026-08-05, 128 bleibt.** `J` ist gar kein freier Parameter — das
+      `CASE`-Makro matcht auf `J == (J_)`, J ist also ein Suchschlüssel des Aufrufers, keine
+      Stellschraube. Gemessen wurde daher `I` über 64/96/128/160/192/256 (korrekte Umgebung,
+      `-r 2`, pp2048):
+
+      | `I` | Q5_K_M | Q8_0 |
+      |---|---:|---:|
+      | 64 | 445,95 ± 0,32 | 692,26 ± 0,33 |
+      | **128** | **674,51 ± 0,31** | **776,49 ± 0,49** |
+      | 96 / 160 / 192 / 256 | GPU-Fault | GPU-Fault |
+
+      64 kostet 34 % bei Q5_K. Alle übrigen Werte **bauen sauber** und faulten dann die GPU mit
+      `HSA_STATUS_ERROR_MEMORY_APERTURE_VIOLATION`. Der `static_assert` im `CASE`-Makro prüft nur
+      `I % 32 == 0` und lässt damit Werte durch, die der Kernel nicht adressieren kann.
+      **Das ist dieselbe Fehlerklasse wie der bis heute ungeklärte `nwarps=16`-Fault des alten
+      Forks** (`AGENTS.md`, Teil C): ein zu schwaches Guard, das eine unhaltbare Konfiguration
+      durchwinkt. Die Tuning-Reserve in der Tile-Geometrie ist damit erschöpft.
+
 - [ ] **Offen:** Q2_K, Q3_K, Q4_K haben `stream_k` per Analogie zu Q5_K/Q6_K bekommen,
-      wurden aber nicht gemessen. `I`, `J` und `K_vram` sind unverändert von RDNA2 übernommen
-      und für GCN5 nie untersucht.
+      wurden aber nicht gemessen. `K_vram` (`MMQ_ITER_K`) ist unverändert von RDNA2 und
+      ungetestet.
 
 ---
 
