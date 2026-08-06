@@ -238,7 +238,51 @@ immer `-v`.
 
 ---
 
+## ✅ Abschlussbeleg: Dreiecksmessung (2026-08-06)
+
+Drei Builds derselben Maschine, identischer Aufruf — `Ornith-1.0-35B` Q6_K (MoE), 2 GPUs
+`-sm tensor`, `-p 4096 -n 128`:
+
+| Build | pp4096 | vs. Mainline | tg128 |
+|---|---:|---:|---:|
+| Mainline `10297` | 960,24 ± 3,81 | — | 53,71 ± 4,90 |
+| Original-Fork `mxxm-t` `10254` | 994,03 ± 2,84 | +3,5 % | 57,54 ± 5,85 |
+| **`gcn5` (b10288 + 2 Patches)** | **1115,42 ± 2,66** | **+16,1 %** | 55,71 ± 3,76 |
+
+Beim Decode überlappen alle drei Streuungen; dort ist **kein Unterschied nachweisbar**.
+
+**Der gesamte Original-Fork — Custom-AllReduce, Multi-Stage-TP, Lane dispatch, Token graph,
+MTP-Optimierung, mehrere tausend Zeilen — bringt auf dieser Maschine 3,5 % Prefill. Die 470
+Zeilen dieses Branches bringen 16,1 %.**
+
+Zwei Gründe, beide bestätigen die Strategie:
+
+1. **Upstream hat aufgeholt.** Mainline steht 43 Releases vor dem Fork. Meta-Backend,
+   `-sm tensor` mit eigenem AllReduce, `--load-mode dio`, Graph-Reuse — alles inzwischen oben.
+   Der Fork pflegte Divergenz, die ihren Zweck verloren hatte.
+2. **Der Fork ist für andere Hardware gebaut.** Lane dispatch und Token graph skalieren mit der
+   Größe der TP-Gruppe: +32 % bei acht GPUs, +2,5 % bei vier, bei zwei Karten nichts. Kein Mangel
+   des Forks, sondern eine Aussage über diese Maschine.
+
+Der Patch dieses Branches zielt dagegen genau auf das, was hier limitiert: die fehlende
+Architektur-Konfiguration für gfx906. Deshalb schlägt er beide.
+
+**Das Abbruchkriterium ist damit klar verfehlt — im günstigen Sinne.** Zusätzlich zeigt sich,
+dass der aufgegebene Fork-Rest auf dieser Hardware ohnehin nichts trug.
+
+---
+
 ## Zielzustand
+
+**Erreicht 2026-08-06** — `gcn5` auf `b10288`, zwei Patches, 470 Zeilen in sechs Dateien:
+
+```
+b10288
+  ├─ CUDA: add MMQ config for GCN5 (gfx906)      295 Zeilen  → +16,1 % pp
+  └─ CUDA: reuse the quantized activation…       175 Zeilen  → +0,5–1,4 %, bit-exakt
+```
+
+Ursprünglich geplanter Zielzustand:
 
 ```
 b10238 (oder neuer)
