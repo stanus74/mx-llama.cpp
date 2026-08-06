@@ -12,8 +12,18 @@
 // K-quants gain 10-14% from stream_k while Q8_0 loses ~6%. Since the config is per type, both
 // optima can be had at once: stream_k on for Q2_K..Q6_K, off for everything else.
 //
-// Q5_K, Q6_K and Q8_0 were measured. Q2_K/Q3_K/Q4_K get stream_k by analogy with the two
-// K-quants that were. occupancy was swept too (1 vs 2) and made no difference.
+// The K-quant / non-K-quant split was checked, not just assumed. Q4_0 and IQ4_XS were measured
+// with stream_k forced on and both lose, like Q8_0:
+//   Q4_0    (9B,  1 GPU)   832.84 -> 795.21   -4.5%
+//   IQ4_XS  (80B, 2 GPU)   832.06 -> 813.18   -2.3%
+// So the line is drawn correctly. Q2_K/Q3_K/Q4_K keep stream_k by analogy with Q5_K/Q6_K; no
+// model of those types was on hand to check.
+//
+// occupancy was swept too (1 vs 2) and made no difference. I was swept over 64/96/128/160/192/256:
+// 128 is optimal, 64 costs 34% on Q5_K, and every other value compiles but faults the GPU with
+// HSA_STATUS_ERROR_MEMORY_APERTURE_VIOLATION - the CASE static_assert only checks I % 32 == 0.
+// J is not a free parameter at all, the macro matches on it. K_vram is MMQ_ITER_K on every
+// architecture. The config is exhausted.
 static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config_gcn5(ggml_type type, int J, bool fallback) {
     CASE(GGML_TYPE_Q1_0, 512, 2, 128,   8, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, false, true);
     CASE(GGML_TYPE_Q1_0, 512, 2, 128,  16, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, false, true);

@@ -207,9 +207,25 @@ ist Korrektheit, nicht Reproduzierbarkeit auf Zeichenebene.
       Forks** (`AGENTS.md`, Teil C): ein zu schwaches Guard, das eine unhaltbare Konfiguration
       durchwinkt. Die Tuning-Reserve in der Tile-Geometrie ist damit erschöpft.
 
-- [ ] **Offen:** Q2_K, Q3_K, Q4_K haben `stream_k` per Analogie zu Q5_K/Q6_K bekommen,
-      wurden aber nicht gemessen. `K_vram` (`MMQ_ITER_K`) ist unverändert von RDNA2 und
-      ungetestet.
+- [x] **`stream_k` für Nicht-K-Quants geprüft (2026-08-06): Trennlinie bestätigt.** Die Vermutung
+      war, dass die elf von RDNA2 geerbten `stream_k=false`-Typen nie geprüft wurden und dort
+      zweistellige Prozente brachliegen. Gemessen mit erzwungenem `stream_k=true`:
+
+      | | aus | an | Δ |
+      |---|---:|---:|---:|
+      | Q4_0 (9B, 1 GPU) pp2048 | 832,84 ± 0,68 | 795,21 ± 0,50 | **−4,5 %** |
+      | IQ4_XS (80B, 2 GPU) pp2048 | 832,06 ± 4,96 | 813,18 ± 3,98 | **−2,3 %** |
+
+      Beide **verlieren**, wie Q8_0. Die Config bleibt unverändert. Damit ist die Aufteilung
+      „K-Quants an, Rest aus" nicht mehr Analogieschluss, sondern an vier Typen belegt
+      (Q5_K/Q6_K gewinnen, Q8_0/Q4_0/IQ4_XS verlieren).
+
+- [ ] **Offen, mangels Modell:** Q2_K, Q3_K, Q4_K haben `stream_k` weiterhin per Analogie zu
+      Q5_K/Q6_K. `K_vram` ist auf allen Architekturen `MMQ_ITER_K`, also kein Parameter.
+
+**Damit ist die MMQ-Config ausgereizt.** `nthreads` am Makro-Maximum, `occupancy` ohne Effekt,
+`I` gemessen (128 optimal, Rest faultet), `J` kein Parameter, `K_vram` und `sram_layout`
+architekturübergreifend fix, `stream_k` pro Typ belegt.
 
 ---
 
