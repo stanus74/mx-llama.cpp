@@ -109,14 +109,22 @@ fi
 echo "✅ Build erfolgreich in ${SECONDS}s"
 
 if (( CHECK )); then
-    echo "🔍 test-backend-ops -o MUL_MAT (gefiltert)"
+    echo "🔍 test-backend-ops -o MUL_MAT"
     # An unfiltered run aborts at MUL_MAT(type_a=f32) with CUBLAS_STATUS_INTERNAL_ERROR
-    # on this ROCm version - pre-existing, untouched mainline does the same. Filter by type.
+    # on this ROCm version - pre-existing, untouched mainline does the same. So the run
+    # is expected to end early; what matters is that nothing FAILs before it does.
+    OUT=$(HSA_XNACK=0 HIP_VISIBLE_DEVICES=1 build/bin/test-backend-ops -o MUL_MAT 2>&1) || true
+    FAILED=$(grep -c "FAIL" <<<"$OUT")
     for t in q4_K q5_K q6_K q8_0; do
-        n=$(HSA_XNACK=0 HIP_VISIBLE_DEVICES=1 build/bin/test-backend-ops -o MUL_MAT 2>/dev/null \
-            | grep -c "type_a=$t.*OK")
-        printf '  %-6s %s bestanden\n' "$t" "$n"
+        printf '  %-6s %4s OK  %s FAIL\n' "$t" \
+            "$(grep -c "type_a=$t.*OK" <<<"$OUT")" "$(grep -c "type_a=$t.*FAIL" <<<"$OUT")"
     done
+    if (( FAILED > 0 )); then
+        echo "❌ $FAILED fehlgeschlagene Faelle:"
+        grep "FAIL" <<<"$OUT" | head -5
+        exit 1
+    fi
+    echo "  ✅ keine Fehlschlaege"
 fi
 
 cat <<'RUN'
