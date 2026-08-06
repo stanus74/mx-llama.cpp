@@ -364,6 +364,26 @@ Aufnahme ist real, und bei Aufnahme sinkt der Pflegeaufwand auf **null**.
 
 ---
 
+## Rebase auf b10288 (2026-08-06)
+
+`git rebase --onto b10288 b10238 gcn5` — **konfliktfrei**, alle 18 Commits. Der Eingriff blieb
+Zeile für Zeile identisch (nur Kontextzeilen verschoben), weiterhin 470 Zeilen in sechs Dateien.
+
+Danach A/B gegen unverändertes Mainline im Nachbar-Worktree `/opt/llama.cpp`, beide auf praktisch
+derselben Basis, `Ornith-1.0-35B` Q6_K (MoE), 2 GPUs `-sm tensor`, `-r 5`:
+
+| | Mainline | gcn5 | Δ |
+|---|---:|---:|---:|
+| **pp4096** | 956,74 ± 3,70 | **1115,42 ± 2,66** | **+16,6 %** |
+| tg128 | 54,63 ± 4,07 | 55,71 ± 3,76 | +2,0 % (Streuungen überlappen) |
+
+Der Prefill-Gewinn ist repliziert (eigene Messung des Nutzers zuvor: +16,2 %). Beim **Decode ist
+kein Effekt nachweisbar** — erwartungsgemäß, denn MMQ wirkt auf Matmuls mit vielen Tokens. Die
+Decode-Streuung liegt auf diesem Rechner selbst bei `-r 5` bei ±4 t/s; kleinere Aussagen als ~15 %
+sind dort nicht belastbar.
+
+---
+
 ## Laufender Betrieb: Rebase statt Merge
 
 ```bash
