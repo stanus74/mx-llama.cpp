@@ -400,6 +400,48 @@ sind dort nicht belastbar.
 
 ---
 
+## Rebase auf b10760 (2026-09-02)
+
+`git rebase --onto b10760 b10298 gcn5` — 460 Releases, **vier Konflikte**, alle aufgelöst:
+
+1. `AGENTS.md` — upstream hat seinen Contributor-Leitfaden neu gefasst. **Unsere Fassung behalten**;
+   der abgespielte Commit installiert sie absichtlich, und upstreams Text bestätigt selbst
+   „Private forks are exempt".
+2. `.github/workflows/build-wasm.yml` — von uns gelöscht, von upstream geändert. Neue Fassung als
+   `.disabled` übernommen. Dazu `make-release` und `pr-draft-label` nachträglich deaktiviert; die
+   kamen neu und waren aktiv.
+3. `ggml/src/ggml-cuda/common.cuh` — siehe Warnung unten.
+
+> ⚠ **`git checkout --theirs <datei>` nimmt die GANZE Datei, nicht nur den Konfliktblock.**
+> Damit wurden beim ersten Versuch sämtliche Upstream-Änderungen an `common.cuh` verworfen —
+> die Datei trug danach die alte eindimensionale `cublas_handles[]`-Fassung von `b10298` statt
+> der neuen mit Workspaces, und `glu_limit` fehlte in beiden Fusion-Structs, obwohl
+> `ggml-cuda.cu` es fünfmal benutzt. Der Build wäre gescheitert.
+>
+> **Erkannt durch Mengenvergleich statt Diff-Lesen:**
+> `comm -23 <(git show b10760:datei | sort -u) <(sort -u datei)` listet Upstream-Zeilen, die
+> nirgends mehr vorkommen. Ein Diff zeigt Verschiebungen und Verluste gleich aussehend; dieser
+> Vergleich unterscheidet sie. **Gehört nach jedem größeren Rebase gemacht** — es ist dieselbe
+> Fehlerklasse, die `AGENTS.md` für Merges beschreibt.
+>
+> Korrekt behoben durch `git checkout b10760 -- common.cuh` und erneutes Einsetzen der zwei
+> eigenen Blöcke, dann per `--fixup` in den q8_1-Commit gefaltet.
+
+**Ergebnis:** 491 Zeilen in sechs Dateien, Patch inhaltlich unverändert. Build sauber (231 s),
+`test-backend-ops` q4_K/q5_K/q6_K/q8_0 je ohne Fehlschlag.
+
+Messung auf der neuen Basis, 2 GPUs `-sm tensor`, `-r 3`, pp4096:
+
+| Modell | pp4096 | tg128 |
+|---|---:|---:|
+| Qwopus3.6-35B (Q5_K, 24,26 GiB) | 1117,41 ± 2,15 | 53,04 ± 4,62 |
+| Ornith-1.5-35B **I-Quality** (22,08 GiB) | **1189,37 ± 0,67** | 53,18 ± 4,73 |
+
+Zum Vergleich Ornith-1.0-35B auf `b10288`: 1115,42. Der Modellbestand hat sich zwischenzeitlich
+geändert, ein direkter Vorher-Nachher-Vergleich desselben Modells ist daher nicht möglich.
+
+---
+
 ## Laufender Betrieb: Rebase statt Merge
 
 ```bash
