@@ -54,6 +54,37 @@ export HSA_XNACK=0    # ohne dies melden sich die Karten als xnack+ und MoE-Pref
 
 Siehe [hipblas-sgemm-moe-router-crash.md](hipblas-sgemm-moe-router-crash.md).
 
+## Behoben: die Variablen erreichen jetzt auch Skripte (2026-09-06)
+
+Ubuntus `~/.bashrc` beginnt mit dem Standard-Wächter
+
+```bash
+case $- in
+    *i*) ;;
+      *) return;;
+esac
+```
+
+und die GPU-Exports standen **dahinter**. `ssh host 'cmd'`, cron und Skripte stiegen also vor
+ihnen aus — das hat am 2026-08-05 eine halbe Sitzung Fehlersuche und eine falsche Diagnose
+gekostet.
+
+Auf `x99` liegen sie jetzt in **`~/.config/gpu-env.sh`**, geladen in `~/.bashrc` **vor** dem
+Wächter:
+
+```bash
+[ -f "$HOME/.config/gpu-env.sh" ] && . "$HOME/.config/gpu-env.sh"
+```
+
+Verifiziert: `ssh host 'env | grep ^HSA'` liefert alle Variablen, und ein `llama-bench` ohne
+jedes Env-Präfix meldet `gfx906:sramecc+:xnack-`.
+
+`llama-swap` war nie betroffen — der systemd-User-Dienst bekommt die Umgebung anders. Der Fix
+gilt Messungen und Skripten.
+
+Nebenbei behoben: `export PATH=$ROCM_PATH/bin:…` benutzte eine auskommentierte Variable und
+hängte dadurch `/bin` an den Anfang von `PATH`.
+
 ## Kernel: `amdgpu.noretry` nicht auf 0 zwingen (2026-09-06)
 
 `HSA_XNACK=0` hat einen kernelseitigen Gegenpart: `amdgpu.noretry`. Der Modulstandard ist **`-1`
