@@ -400,6 +400,16 @@ sind dort nicht belastbar.
 
 ---
 
+## Rebase auf b10820 (2026-09-05)
+
+`git rebase --onto b10820 b10760 gcn5` — 60 Commits, **konfliktfrei**, Patch Zeile für Zeile
+unverändert (481 Zeilen). Mengenvergleich auf verlorene Upstream-Zeilen: `common.cuh`,
+`ggml-cuda.cu` und `mmq.cuh` sauber; die Treffer in `mmq.cu` (4) und `mmvq.cu` (6) sind genau die
+Zeilen, die der q8_1-Cache ersetzt. Build 229 s, `test-backend-ops` ohne Fehlschlag,
+`Qwen3.8-27B-UD-Q6_K_XL` unverändert bei pp4096 380,44 ± 1,05 / tg128 24,05 ± 1,43.
+
+---
+
 ## Rebase auf b10760 (2026-09-02)
 
 `git rebase --onto b10760 b10298 gcn5` — 460 Releases, **vier Konflikte**, alle aufgelöst:
