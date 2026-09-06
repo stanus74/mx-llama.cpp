@@ -73,9 +73,43 @@ im selben Zug von 6.8.0-138 auf -139, die kleine Verbesserung ist deshalb nicht 
 **Regel:** Wer `HSA_XNACK=0` setzt, sollte `amdgpu.noretry` auf `auto` lassen. Beides gegenläufig
 zu konfigurieren heißt, dass die GPU Faults nimmt, mit denen der Userspace nicht rechnet.
 
-Offen: `HSA_ENABLE_SDMA=0` in `hip_env_dual` schaltet die DMA-Engines ab, Kopien laufen dann als
-Blit-Kernel über die Compute-Queues — mehr Completions, mehr Interrupts. Stammt vermutlich aus
-derselben Debug-Phase wie die P2P-Flags und ist ungemessen.
+**Herkunft geklärt (qmd, gfx906-Discord):** Die Kommandozeile stammt aus einem **P2P-Tuning-Rezept**
+für X99-Boards:
+
+```
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash iommu=pt mitigations=off
+pcie_acs_override=downstream,multifunction amdgpu.pcie_p2p=1
+amdgpu.noretry=0 pci=realloc,assign-busses"
+```
+
+Der Autor schreibt selbst dazu „better to check the need of every parameter for your setup" und
+berichtet, dass P2P auf seinem x99-f8d-plus hardwarebedingt gar nicht funktioniert. Ein zweiter
+Nutzer erklärt den Parameter direkt: **„`amdgpu.noretry=0` — enables xnack system wide."**
+
+Auf dieser Maschine wurde P2P bewusst abgeschaltet, der Rest des Rezepts greift also nicht —
+`amdgpu.noretry=0` war schlicht mitgekommen.
+
+## `HSA_ENABLE_SDMA=0`: gemessen, ohne Wirkung (2026-09-06)
+
+Steht in `hip_env_dual` und schaltet die DMA-Engines ab, sodass Kopien als Blit-Kernel über die
+Compute-Queues laufen. In der gfx906-Discord-Sammlung taucht der Schalter nur in zwei
+kopierten Env-Blöcken auf (ein Docker-Build mit `AMD_LOG_LEVEL=3`, ein vllm-Container) —
+**eine Begründung gibt es nirgends.**
+
+`Qwen3.8-27B-UD-Q6_K_XL`, 2 GPUs `-sm tensor`, `-r 5`:
+
+| | tg128 |
+|---|---:|
+| `HSA_ENABLE_SDMA=0` | 24,95 ± 0,78 |
+| `HSA_ENABLE_SDMA=1` | 24,86 ± 0,78 |
+
+Prefill ebenfalls gleich (383,58 gegen 385,25). **Kein Effekt, in keine Richtung.**
+
+> ⚠ **Warnung vor dem eigenen Messfehler:** Ein erster Durchgang mit `-r 3`, bei dem beide
+> Varianten nacheinander liefen, zeigte tg128 18,63 gegen 24,51 — also scheinbar −24 % durch
+> `SDMA=0`. Das war ein **Ausreißer und nicht reproduzierbar**; die Ursache blieb ungeklärt
+> (Taktverhalten oder Fremdlast). Bei Unterschieden dieser Größenordnung erst gegenmessen,
+> bevor daraus ein Befund wird — `-r 3` in einem einzelnen Durchgang trägt das nicht.
 
 ---
 
