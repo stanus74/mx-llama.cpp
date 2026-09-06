@@ -54,6 +54,31 @@ export HSA_XNACK=0    # ohne dies melden sich die Karten als xnack+ und MoE-Pref
 
 Siehe [hipblas-sgemm-moe-router-crash.md](hipblas-sgemm-moe-router-crash.md).
 
+## Kernel: `amdgpu.noretry` nicht auf 0 zwingen (2026-09-06)
+
+`HSA_XNACK=0` hat einen kernelseitigen Gegenpart: `amdgpu.noretry`. Der Modulstandard ist **`-1`
+(auto)**; `noretry=0` erzwingt **Retry-Page-Faults**, also genau den Mechanismus, den XNACK nutzt.
+
+Auf `x99` stand `amdgpu.noretry=0` in der Kernel-Kommandozeile — im Widerspruch zu `HSA_XNACK=0`
+im Userspace. Symptom: ein `workqueue: interrupt_wq [amdgpu] hogged CPU for >10000us`-Sturm mit
+exponentiell wachsender Zählung (4 → 8 → … → 2048 in vier Minuten), dabei eine Anfrage, die
+1h47m in der Warteschlange hing und dann mit `no valid JSON data found in stream` scheiterte.
+Kein GPU-Reset, kein OOM, kein Panic.
+
+**Behoben durch Streichen von `amdgpu.noretry=0`** aus `/etc/default/grub` (+ `update-grub`,
+Reboot). Danach `noretry = -1`, Karten weiterhin `gfx906:sramecc+:xnack-`, keine Regression:
+`Qwen3.8-27B-UD-Q6_K_XL` pp4096 383,73 ± 0,74 gegen 380,44 ± 1,05 vorher. Der Kernel wechselte
+im selben Zug von 6.8.0-138 auf -139, die kleine Verbesserung ist deshalb nicht zuschreibbar.
+
+**Regel:** Wer `HSA_XNACK=0` setzt, sollte `amdgpu.noretry` auf `auto` lassen. Beides gegenläufig
+zu konfigurieren heißt, dass die GPU Faults nimmt, mit denen der Userspace nicht rechnet.
+
+Offen: `HSA_ENABLE_SDMA=0` in `hip_env_dual` schaltet die DMA-Engines ab, Kopien laufen dann als
+Blit-Kernel über die Compute-Queues — mehr Completions, mehr Interrupts. Stammt vermutlich aus
+derselben Debug-Phase wie die P2P-Flags und ist ungemessen.
+
+---
+
 Weiterhin richtig, unabhängig vom Fork:
 
 - **`-lm dio`** — Upstream-Flag, mmap hängt auf diesem Stack.
