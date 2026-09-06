@@ -442,6 +442,42 @@ geändert, ein direkter Vorher-Nachher-Vergleich desselben Modells ist daher nic
 
 ---
 
+## Weight-Repack des Original-Forks bewertet (2026-09-05)
+
+`mxxm-t/mx-llama.cpp` hat seit Ende August einen **Weight-Repack für gfx906** (`q8_repack/`,
+Commit `2e9d29fe7`): Gewichte werden in ein Layout mit getrennten Quant- und Skalen-Ebenen
+geladen, damit der Prefill keine Per-Block-Skalen-Gathers mehr zahlt. Standardmäßig aktiv,
+abschaltbar mit `--no-repack` / `-nr 1`. Die `FEATURES.md` nennt **+69 % (1 GPU) bzw. +59 %
+(2 GPU tensor) für Q6_K**.
+
+Gemessen auf `Qwen3.8-27B-UD-Q6_K_XL`, 2 GPUs `-sm tensor`, `-r 3`:
+
+| Build | pp512 | pp4096 | tg128 |
+|---|---:|---:|---:|
+| **`gcn5`** | **391,86 ± 1,30** | **380,44 ± 0,95** | 24,05 ± 1,37 |
+| mx-org **mit** Repack | 361,70 ± 0,68 | 352,76 ± 0,56 | 26,13 ± 1,48 |
+| mx-org **ohne** Repack (`-nr 1`) | 337,76 ± 0,92 | 332,74 ± 0,22 | 23,81 ± 1,23 |
+
+**Der Repack wirkt, aber mit +7,1 % (pp512) und +6,0 % (pp4096) — nicht +59 %.** Die
+`-nr 1`-Kontrolle isoliert ihn sauber. **`gcn5` bleibt in beiden Betriebspunkten vorn:** +8,3 %
+bzw. +7,8 % gegenüber dem Fork *mit* aktivem Repack.
+
+**Eine Hypothese dazu wurde geprüft und verworfen:** Da Repack Skalen-Gathers spart, sollte er
+bei kleinen Batches relativ mehr bringen, wo der Matmul weniger dominiert. Die Messung zeigt
+über pp512 und pp4096 praktisch denselben Anteil. Der Abstand zu den +59 % muss also aus dem
+anderen Modell (Qwen3-14B), dem `-tps 2`-Modus oder dem 1-GPU-Layer-Fall stammen — hier
+reproduziert er in keinem der beiden Regime.
+
+Beim **Decode** liegt mx-org nominell vorn (26,13 gegen 24,05, +8,6 %), bei Streuungen von ±1,4
+aber grenzwertig. Falls echt, käme es vom Mat-Vec-Pfad des Repacks — dort, wo der MMQ-Patch bei
+Batch 1 nichts tut. **Das ist der einzige Punkt, an dem eine Portierung lohnen könnte**, und der
+wäre vorher mit mehr Wiederholungen abzusichern.
+
+**Vierte fremde Prozentzahl in Folge, die bei der Nachmessung deutlich schrumpft** (BF16
+wirkungslos, q8_1 ein Drittel, Lane dispatch hardwareabhängig, Repack ein Zehntel).
+
+---
+
 ## Laufender Betrieb: Rebase statt Merge
 
 ```bash
