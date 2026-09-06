@@ -400,6 +400,15 @@ sind dort nicht belastbar.
 
 ---
 
+## Rebase auf b10826 (2026-09-06)
+
+`git rebase --onto b10826 b10820 gcn5` — 6 Commits, konfliktfrei, Patch unverändert (481 Zeilen).
+Mengenvergleich sauber (0 verlorene Upstream-Zeilen in `common.cuh`, `ggml-cuda.cu`, `mmq.cuh`).
+Build 185 s, `test-backend-ops` ohne Fehlschlag, `Qwen3.8-27B-UD-Q6_K_XL` pp4096 383,41 ± 1,00 /
+tg128 24,27 ± 1,53 — unverändert.
+
+---
+
 ## Rebase auf b10820 (2026-09-05)
 
 `git rebase --onto b10820 b10760 gcn5` — 60 Commits, **konfliktfrei**, Patch Zeile für Zeile
