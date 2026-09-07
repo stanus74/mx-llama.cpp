@@ -400,6 +400,15 @@ sind dort nicht belastbar.
 
 ---
 
+## Rebase auf b10837 (2026-09-06)
+
+`git rebase --onto b10837 b10826 gcn5` — 11 Commits. Upstream hat unsere Dateien **gar nicht
+berührt**, der Rebase war damit trivial. 0 verlorene Upstream-Zeilen, Patch identisch (481 Zeilen).
+Build 99 s, `test-backend-ops` ohne Fehlschlag, `Qwen3.8-27B-UD-Q6_K_XL` pp4096 382,85 ± 0,90 /
+tg128 24,29 ± 1,23.
+
+---
+
 ## Rebase auf b10826 (2026-09-06)
 
 `git rebase --onto b10826 b10820 gcn5` — 6 Commits, konfliktfrei, Patch unverändert (481 Zeilen).
