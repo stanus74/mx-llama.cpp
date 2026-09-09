@@ -221,6 +221,49 @@ Sicherungen der `config.yaml` liegen als `.bak` bis `.bak6` daneben.
 
 ---
 
+### Profile über Aliase statt zweiter Modellinstanz
+
+`llama-swap` kann Anfrageparameter **pro Alias** überschreiben (`filters.setParamsByID`). Die
+Dokumentation nennt genau diesen Fall: *„Useful with aliases to vary behaviour depending on which
+alias the client used (e.g. different reasoning_effort per alias)"*. Werte dürfen Objekte sein,
+`chat_template_kwargs` lässt sich also injizieren.
+
+```yaml
+    aliases:
+      - ornith-fast
+      - ornith-think
+    filters:
+      setParamsByID:
+        ornith-fast:
+          chat_template_kwargs:
+            reasoning_effort: "none"
+            auto_disable_thinking_with_tools: true
+            max_tool_response_chars: 16000
+        ornith-think:
+          chat_template_kwargs:
+            auto_disable_thinking_with_tools: false
+            reasoning_effort: "high"
+            max_tool_response_chars: 16000
+```
+
+Gemessen, identische Anfrage mit Werkzeugen:
+
+| Alias | Reasoning | Tool-Call | Completion |
+|---|---:|---:|---:|
+| `ornith` | 0 | 1 ✓ | 28 |
+| `ornith-fast` | 0 | 1 ✓ | 28 |
+| `ornith-think` | **64** | 1 ✓ | 47 |
+
+**Alle drei laufen auf demselben geladenen Prozess** — der Wechsel kostet keine Ladezeit. Der
+Unterschied zwischen `ornith` und `ornith-fast` zeigt sich erst *ohne* Werkzeuge: `ornith` denkt
+dort weiter (147 Zeichen bei „Sage OK"), `ornith-fast` gar nicht.
+
+> **Grenze:** Das Chat-Template wird über `--chat-template-file` beim **Serverstart** gewählt und
+> ist kein Anfrageparameter. Der Loopguard braucht deshalb weiterhin einen eigenen Modelleintrag;
+> Aliase können ihn nicht umschalten.
+
+---
+
 ## Was **nicht** gelöst ist
 
 **Die Schleifenbildung selbst.** Der Loopguard rendert nachweislich die Warnung — ob sie ein
@@ -244,9 +287,21 @@ die Claude Code gebaut wurde. Keine Konfiguration ändert das.
 Nachdenken die ganze Antwort und man bekommt einen leeren String zurück — reproduziert bei
 `max_tokens: 60`. Claude Code setzt 32000, andere Werkzeuge womöglich nicht.
 
-**`llama-swap` reicht nur die Modell-Routen durch.** `/apply-template` und andere llama.cpp-eigene
-Endpunkte antworten mit 404; dafür den Upstream-Port aus der Prozess-Kommandozeile nehmen
-(`ps -eo args | grep -o -- "--port [0-9]*"`).
+**llama.cpp-eigene Endpunkte gehen über `/upstream/<model>/…`.** Ein direkter Aufruf von
+`/apply-template` antwortet mit 404 — daraus wurde hier zunächst fälschlich geschlossen, llama-swap
+reiche solche Routen gar nicht durch. Es gibt den dokumentierten Pfad
+`/upstream/:model_id/…`; verifiziert mit `/upstream/ornith/props` → HTTP 200. Der Umweg über den
+Upstream-Port aus der Prozessliste war unnötig.
+
+**Logs liegen unter `/logs`, nicht `/logs/upstream`.** Auch hier führte der falsche Pfad zu einem
+404 und zum voreiligen Schluss, die Logs seien unerreichbar. `/logs` liefert die gepufferten
+Zugriffslogs, `/logs/stream/upstream` streamt die Upstream-Prozesse. **Offen bleibt:** In `/logs`
+fanden sich keine llama.cpp-Timings (`prompt eval time`, `t/s`) — bei `logLevel: info` gibt
+llama-server sie womöglich gar nicht aus.
+
+**Erst die Dokumentation, dann der Schluss.** Zwei der ursprünglich sechs vermeintlichen Lücken in
+llama-swap existierten nicht; sie entstanden daraus, dass ein 404 als „Funktion fehlt" gelesen
+wurde statt als „falscher Pfad".
 
 **Quoting in `config.yaml` überlebt.** `--chat-template-kwargs '{"…":true}'` in einem
 YAML-`>`-Block kommt korrekt beim Server an — llama-swap entfernt die einfachen Anführungszeichen.
