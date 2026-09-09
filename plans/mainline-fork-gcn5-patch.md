@@ -400,6 +400,21 @@ sind dort nicht belastbar.
 
 ---
 
+## Rebase auf b10873 (2026-09-06)
+
+`git rebase --onto b10873 b10837 gcn5` — 36 Commits. Upstream hat diesmal **unsere Dateien
+deutlich verändert** (`mmvq.cu` +55, `common.cuh` +39) und der Rebase lief trotzdem konfliktfrei;
+der Mengenvergleich bestätigt 0 verlorene Upstream-Zeilen. Patch identisch, 481 Zeilen.
+Build 249 s, `test-backend-ops` ohne Fehlschlag, pp4096 383,53 ± 0,96 / tg128 24,38 ± 1,23.
+
+> ⚠ **Vor jedem Benchmark den VRAM prüfen.** Ein erster Versuch scheiterte mit
+> `GGML_ASSERT(meta_buf_ctx->bufs[i])` in `ggml-backend-meta.cpp` — ein verkleidetes OOM, weil
+> `llama-swap` ein Modell geladen hatte (9,7 GiB auf GPU0, 24,5 GiB auf GPU1). Das sah zunächst
+> nach einer Rebase-Regression aus. `rocm-smi --showmeminfo vram` und `pgrep -af llama-server`
+> gehören in die Routine.
+
+---
+
 ## Rebase auf b10837 (2026-09-06)
 
 `git rebase --onto b10837 b10826 gcn5` — 11 Commits. Upstream hat unsere Dateien **gar nicht
