@@ -368,15 +368,17 @@ benutzen. Das wäre kein Scheitern, sondern das billigstmögliche Ergebnis.
 
 ---
 
-## Danach: Upstream-PR erwägen
+## Upstream-PR: ❌ entschieden dagegen (2026-09-09)
 
-Eine fehlende Architektur-Konfiguration ist eine Lücke, kein Sonderwunsch — die Chance auf
-Aufnahme ist real, und bei Aufnahme sinkt der Pflegeaufwand auf **null**.
+**Es wird kein PR an `ggml-org/llama.cpp` gestellt.** Entscheidung des Betreibers, nicht aus
+technischen Gründen.
 
-- [ ] Messwerte für zwei Modelle/Quantisierungen beilegen
-- [ ] Upstream hat eine Anti-AI-PR-Policy: die Herleitung als eigene Messung darstellen,
-      nicht als Werkzeugausgabe
-- [ ] Bis zur Aufnahme (oder Ablehnung) bleibt der Patch lokal auf `gcn5`
+Der Patch bleibt damit dauerhaft lokal auf `gcn5`, und die 481 Zeilen bleiben in eigener
+Pflege. Das ist tragbar: fünf Rebases zwischen `b10238` und `b10873` sind durch, davon vier
+ohne jeden Konflikt und einer mit vier trivialen; der Durchgang inklusive Bau und Verifikation
+liegt bei unter fünf Minuten.
+
+Das Thema ist erledigt und braucht in künftigen Sitzungen nicht erneut vorgeschlagen zu werden.
 
 ---
 
