@@ -194,9 +194,9 @@ Ergänzt in `qwen36-froggeric-v21-loopguard.jinja`:
 {%- endif %}
 ```
 
-Verifiziert über `/apply-template` am Upstream-Server (Port 11004, llama-swap reicht diese Route
-nicht durch) mit drei identischen Ergebnissen: **genau eine Warnung, beim dritten** — also vor dem
-gemessenen n=5. Fehlerwarnungen wurden korrekt nicht ausgelöst.
+Verifiziert über `/upstream/ornith-loopguard/apply-template` mit drei identischen Ergebnissen:
+**genau eine Warnung, beim dritten** — also vor dem gemessenen n=5. Fehlerwarnungen wurden korrekt
+nicht ausgelöst.
 
 ---
 
