@@ -506,6 +506,31 @@ wirkungslos, q8_1 ein Drittel, Lane dispatch hardwareabhängig, Repack ein Zehnt
 
 ---
 
+## Langkontext-Vergleich: der Vorsprung hält (2026-09-06)
+
+Offene Frage war, ob die Messungen bei pp512–pp4096 überhaupt etwas über den produktiven
+Betriebspunkt aussagen — dort läuft `-c 131072`. Der mx-Fork beziffert seine Scheduler-Fixes
+(gepinnte Puffer in Zweierpotenzen, Ring-Tiefe nach GPU-Zahl) mit **+69 % Prefill bei 100k
+Kontext**, ein Effekt, der mit der Maskenbreite skaliert und bei 4096 Tokens unsichtbar bliebe.
+
+`Qwen3.8-27B-UD-Q6_K_XL`, 2 GPUs `-sm tensor`, `-ctk/-ctv q8_0`, `-r 2`:
+
+| Kontext | **`gcn5`** | mx-org (Repack aktiv) | Δ |
+|---|---:|---:|---:|
+| pp4096 | **382,39 ± 0,95** | 354,77 ± 0,41 | **+7,8 %** |
+| pp16384 | **362,49 ± 0,66** | 336,50 ± 0,00 | **+7,7 %** |
+| pp32768 | **337,55 ± 0,03** | 315,24 ± 0,01 | **+7,1 %** |
+
+**Der Vorsprung ist über die Spanne stabil** und schrumpft nur minimal. Die +69 % des Forks
+gelten für DeepSeek-V4-Flash über acht GPUs mit `-tps 4` bei 100k — ein anderer Aufbau, der sich
+hier nicht reproduziert.
+
+**Grenze der Aussage:** gemessen bis 32768, produktiv laufen 131072 — ein Faktor 4 darüber. Der
+Trend (7,8 → 7,7 → 7,1) deutet auf kein Umschlagen hin, schließt es bei vierfacher Maskenbreite
+aber nicht aus.
+
+---
+
 ## Laufender Betrieb: Rebase statt Merge
 
 ```bash
