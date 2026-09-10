@@ -1,19 +1,24 @@
 # Claude Code gegen den lokalen Server: Diagnose und Behebung
 
-**Untersucht:** 2026-09-09 · **Maschine:** x99 (2× MI50, gfx906) · **Stack:** llama-swap → mx-org-Build
+**Untersucht:** 2026-09-09, ergänzt 2026-09-10 · **Maschine:** x99 (2× MI50, gfx906) · **Stack:** llama-swap → mx-org-Build
 
 Claude Code lief gegen den lokalen `ornith`-Endpunkt spürbar zäh: lange Wartezeiten, abgebrochene
 Werkzeugaufrufe, blockierte Bash-Befehle. Die Ursache war **nicht** die Hardware — Prefill und
-Decode liegen auf dieser Maschine bei ~1000 bzw. ~55 t/s. Es waren fünf voneinander unabhängige
-Probleme in der Konfiguration und im Protokollpfad.
+Decode liegen auf dieser Maschine bei ~1000 bzw. ~55 t/s. Es waren **sechs** voneinander
+unabhängige Probleme in der Konfiguration und im Protokollpfad — das sechste (Befund 6, ein
+stummes 404 auf Hintergrund-Anfragen) kam erst im echten Betrieb am Folgetag zum Vorschein.
 
 ---
 
 ## Aufbau
 
-`~/.local/bin/claude-local` setzt `ANTHROPIC_BASE_URL=http://192.168.178.71:8080` und ruft
-`claude --model ornith` auf. Claude Code spricht damit die **Anthropic-Messages-API** (`/v1/messages`),
-die llama.cpp emuliert. Dahinter steht llama-swap mit sieben Modellen in einer `exclusive`-Gruppe.
+`~/.local/bin/claude-local` setzt `ANTHROPIC_BASE_URL=http://192.168.178.71:8080` sowie
+`ANTHROPIC_MODEL` und `ANTHROPIC_SMALL_FAST_MODEL` (beide auf `${CLAUDE_LOCAL_MODEL:-claude}`).
+Claude Code spricht damit die **Anthropic-Messages-API** (`/v1/messages`), die llama.cpp emuliert.
+Dahinter steht llama-swap mit acht Modellen in einer `exclusive`-Gruppe.
+
+Ursprünglich zeigte das Skript auf `ornith` und setzte nur `ANTHROPIC_MODEL` — beides ist
+inzwischen geändert (Endstand bzw. Befund 6).
 
 ---
 
@@ -106,6 +111,51 @@ Zweimal dieselbe Anfrage mit 2418 Token stabilem Präfix:
 Daraus folgt: `CLAUDE_LOCAL_LEAN=1` (`--bare --exclude-dynamic-system-prompt-sections`) hilft
 **nicht** durch weniger Tokens, sondern durch ein **stabileres Präfix**. Dynamische Abschnitte —
 Zeitstempel, wechselnde Verzeichnisinhalte, MCP-Serverlisten — entwerten den Cache dahinter.
+
+---
+
+## Befund 6: Hintergrund-Requests liefen ins Leere (404)
+
+Claude Code schickt neben der eigentlichen Konversation **Hintergrund-Anfragen** — Sitzungstitel,
+kurze Klassifizierungen, Zusammenfassungen. Die gehen nicht an das gesetzte Modell, sondern an ein
+zweites, das über `ANTHROPIC_SMALL_FAST_MODEL` bestimmt wird. Ohne diese Variable ist die Vorgabe
+`claude-3-5-haiku-*` — ein Name, den die `config.yaml` nicht kennt.
+
+Im llama-swap-Log:
+
+```
+11:34:58  404  POST /v1/messages   no model id could be identified
+```
+
+Das erklärt Hänger, die keinem Rechenaufwand entsprachen: die Anfrage wurde nie ausgeführt,
+Claude Code wartete auf eine Antwort, die es nicht gab.
+
+**Wichtig:** Dieser Fehler ist **stumm**. Er taucht nur im llama-swap-Zugriffslog auf, nicht in
+der Claude-Code-Oberfläche und nicht im llama-server-Log — dort ist die Anfrage schlicht nicht
+vorhanden, weil sie den Upstream nie erreicht. Wer nur den Modell-Log liest, sieht eine Lücke und
+keine Ursache.
+
+### Lösung: `ANTHROPIC_SMALL_FAST_MODEL` mitsetzen
+
+In `~/.local/bin/claude-local`:
+
+```bash
+MODEL="${CLAUDE_LOCAL_MODEL:-claude}"
+…
+export ANTHROPIC_MODEL="$MODEL"
+export ANTHROPIC_SMALL_FAST_MODEL="$MODEL"   # sonst 404 auf claude-3-5-haiku-*
+```
+
+Damit zeigen auch die Hintergrund-Anfragen auf einen gültigen Alias. Weil beide auf dasselbe
+Modell zeigen, bleibt es bei einer Instanz — die `exclusive`-Gruppe wird nicht verletzt und es
+gibt kein zusätzliches Laden.
+
+Wer den Unterschied will, kann `ANTHROPIC_SMALL_FAST_MODEL` auf ein kleineres Modell zeigen lassen
+(z. B. `qwen35-8b`). Dann lädt llama-swap allerdings ein zweites Modell, und in einer
+`exclusive`-Gruppe verdrängt das das große — für diesen Aufbau also **nicht** empfehlenswert.
+
+**Gegenprobe:** nach einem frischen `claude-local`-Aufruf im Log auf
+`no model id could be identified` prüfen. Bleibt es aus, greift der Fix.
 
 ---
 
@@ -302,7 +352,9 @@ dort weiter (147 Zeichen bei „Sage OK"), `ornith-fast` gar nicht.
 `CLAUDE_LOCAL_MODEL=claude claude-local`.
 
 **Strukturierte Ausgaben.** `output_config` fehlt serverseitig. Betrifft die Sitzungsbenennung
-(kosmetisch) und alles, was Anthropic künftig darüber löst. Nicht konfigurierbar.
+(kosmetisch) und alles, was Anthropic künftig darüber löst. Nicht konfigurierbar. Hinweis: dass
+die Sitzungsbenennung nicht funktionierte, hatte **zwei** Ursachen — diese hier und das 404 aus
+Befund 6. Nur letzteres ließ sich beheben.
 
 **Der Kaltstart.** Nach `ttl: 3600` kostet der erste Aufruf ~60 s. `ttl: 0` würde helfen, ist aber
 durch die `exclusive`-Gruppe begrenzt — für zwei 27-GB-Modelle nebeneinander reicht der VRAM nicht.
@@ -340,3 +392,10 @@ Geprüft über `ps -eo args`.
 
 **Vor jeder Messung VRAM prüfen.** Ein Benchmark gegen belegten Speicher scheitert mit
 `GGML_ASSERT(meta_buf_ctx->bufs[i])` — einem verkleideten OOM, das wie eine Regression aussieht.
+
+**Claude Code benutzt zwei Modellnamen, nicht einen.** `ANTHROPIC_MODEL` allein reicht nicht;
+`ANTHROPIC_SMALL_FAST_MODEL` fällt sonst auf `claude-3-5-haiku-*` zurück und erzeugt 404er (Befund
+6). Bei unerklärlichen Hängern **zuerst das llama-swap-Zugriffslog** auf
+`no model id could be identified` durchsehen — nicht das llama-server-Log, dort fehlt die Anfrage
+vollständig. Faustregel: eine Wartezeit ohne passenden Eintrag im Modell-Log ist kein
+Rechenproblem, sondern ein Routing-Problem.
