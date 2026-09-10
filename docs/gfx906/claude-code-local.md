@@ -194,9 +194,10 @@ Ergänzt in `qwen36-froggeric-v21-loopguard.jinja`:
 {%- endif %}
 ```
 
-Verifiziert über `/upstream/claude/apply-template` mit drei identischen Ergebnissen:
-**genau eine Warnung, beim dritten** — also vor dem gemessenen n=5. Fehlerwarnungen wurden korrekt
-nicht ausgelöst.
+Verifiziert über die Template-Rendering-Route `/upstream/<model>/apply-template` mit drei
+identischen Ergebnissen: **genau eine Warnung, beim dritten** — also vor dem gemessenen n=5.
+Fehlerwarnungen wurden korrekt nicht ausgelöst. (Die Prüfung lief gegen einen inzwischen
+entfallenen Testeintrag; dieselbe Templatedatei liegt heute in `claude`.)
 
 ---
 
