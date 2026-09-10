@@ -194,7 +194,7 @@ Ergänzt in `qwen36-froggeric-v21-loopguard.jinja`:
 {%- endif %}
 ```
 
-Verifiziert über `/upstream/ornith-loopguard/apply-template` mit drei identischen Ergebnissen:
+Verifiziert über `/upstream/claude/apply-template` mit drei identischen Ergebnissen:
 **genau eine Warnung, beim dritten** — also vor dem gemessenen n=5. Fehlerwarnungen wurden korrekt
 nicht ausgelöst.
 
@@ -202,8 +202,11 @@ nicht ausgelöst.
 
 ## Endstand
 
+`ornith` blieb auf dem ursprünglichen Stand — der Chat soll seine Denkphase behalten. Das gesamte
+Agenten-Tuning liegt in einem **eigenen Eintrag `claude`**, der dasselbe Modell lädt:
+
 ```yaml
-  ornith:
+  ornith:                                  # unverändert, für Chat
     cmd: >
       ${hip_env_dual} ${server}
       --model ${models_dir}/Ornith-1.5-35B-A3B-FULLY-OBLITERATED.Q6_K.gguf
@@ -211,13 +214,36 @@ nicht ausgelöst.
       --port ${PORT} -c 131072
       --tensor-split 5,1
       ${qwen_full}
+    ttl: 3600
+
+  claude:                                  # für Claude Code
+    cmd: >
+      ${hip_env_dual} ${server}
+      --model ${models_dir}/Ornith-1.5-35B-A3B-FULLY-OBLITERATED.Q6_K.gguf
+      --chat-template-file ${tmpl_dir}/qwen36-froggeric-v21-loopguard.jinja
+      --port ${PORT} -c 131072
+      --tensor-split 5,1
+      ${qwen_full}
       --reasoning-budget 512
       --no-reasoning-preserve
       --chat-template-kwargs '{"auto_disable_thinking_with_tools":true,"max_tool_response_chars":16000}'
+    ttl: 3600
+    name: "Claude Code (Agent)"
 ```
 
-Dazu `ornith-loopguard` als Testeintrag mit dem gepatchten Template, `ttl: 600`, `-c 32768`.
-Sicherungen der `config.yaml` liegen als `.bak` bis `.bak6` daneben.
+Gemessen, identische Anfrage mit Werkzeugen:
+
+| Modell | Reasoning | Tool-Call | Completion |
+|---|---:|---:|---:|
+| **`claude`** | **0** | 1 ✓ | 41 |
+| `ornith` | 107 | 1 ✓ | 53 |
+
+Der Loopguard liegt direkt in `claude` — er ist für den agentischen Betrieb gedacht, ein separater
+Testeintrag ist damit überflüssig. Nutzung: `CLAUDE_LOCAL_MODEL=claude claude-local`, oder in
+`claude-local` den Vorgabewert auf `claude` setzen.
+
+Sicherungen der `config.yaml` liegen als `.bak` bis `.bak8` daneben; `llama-swap -validate`
+bestätigt 8 Modelle.
 
 ---
 
@@ -259,8 +285,12 @@ Unterschied zwischen `ornith` und `ornith-fast` zeigt sich erst *ohne* Werkzeuge
 dort weiter (147 Zeichen bei „Sage OK"), `ornith-fast` gar nicht.
 
 > **Grenze:** Das Chat-Template wird über `--chat-template-file` beim **Serverstart** gewählt und
-> ist kein Anfrageparameter. Der Loopguard braucht deshalb weiterhin einen eigenen Modelleintrag;
-> Aliase können ihn nicht umschalten.
+> ist kein Anfrageparameter. Aliase können es nicht umschalten — deshalb ist der Loopguard an den
+> eigenen Eintrag `claude` gebunden und nicht per Alias von `ornith` erreichbar.
+>
+> Die hier gezeigten Aliase sind daher **nicht mehr konfiguriert**; die Trennung läuft über zwei
+> Modelleinträge. Der Abschnitt bleibt als belegtes Verfahren stehen, falls du Profile ohne
+> Template-Wechsel brauchst.
 
 ---
 
@@ -268,7 +298,7 @@ dort weiter (147 Zeichen bei „Sage OK"), `ornith-fast` gar nicht.
 
 **Die Schleifenbildung selbst.** Der Loopguard rendert nachweislich die Warnung — ob sie ein
 35B-A3B aus dem Muster holt, ist offen und nur im echten Betrieb feststellbar. Nutzung über
-`CLAUDE_LOCAL_MODEL=ornith-loopguard claude-local`.
+`CLAUDE_LOCAL_MODEL=claude claude-local`.
 
 **Strukturierte Ausgaben.** `output_config` fehlt serverseitig. Betrifft die Sitzungsbenennung
 (kosmetisch) und alles, was Anthropic künftig darüber löst. Nicht konfigurierbar.
