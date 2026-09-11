@@ -349,7 +349,8 @@ dort weiter (147 Zeichen bei „Sage OK"), `ornith-fast` gar nicht.
 
 ## Server-Flags durchgemessen (2026-09-11)
 
-Vier Parameter der `config.yaml` einzeln vermessen. **Einer hat getragen, drei nicht.** Aufbau:
+Vier Parameter der `config.yaml` einzeln vermessen. **Einer brachte eine Verbesserung
+(`--spec-draft-n-max` 2 → 3), die übrigen drei waren schon optimal eingestellt.** Aufbau:
 Produktionsbefehl des `claude`-Eintrags auf Port 18080 nachgebaut, `-sm layer` wie produktiv,
 Prompt aus echten Quelldateien (33 988 Token) plus vier **verschiedene** Fragen, `temperature 0`,
 `top_k 1`, je 600 Token Ausgabe.
@@ -408,29 +409,58 @@ Die Trefferquote lässt sich auf 96,7 % treiben, **nur ist die Verschwendung fas
 Ersparnis teuer**: ein Draft-Token kostet ~2,6 ms, eine Verifikationsrunde ~46 ms. Wegfiltern
 verkürzt die Annahmelänge und erzwingt mehr Runden (bei 0,90: 1034 statt 764 Draft-Aufrufe).
 
-### ❌ `--ubatch-size 4096`: Folgeanfragen fast doppelt so lang
+### ✅ `--ubatch-size 2048` ist das Optimum — vier Werte vermessen
 
-| | `-ub 2048` | `-ub 4096` |
-|---|---:|---:|
-| kalt, 33 988 Tok | **809,5 t/s** → 42,0 s | 783,5 t/s → 43,4 s |
-| Folgeanfrage: zu rechnende Tokens | **2053** | **4097** |
-| Folgeanfrage: Dauer | **3,58 s** | **6,92 s** |
-| VRAM GPU 1 | — | **31,62 / 32,75 GB** |
+| `-ub` | Kaltstart 33 988 Tok | Folgeanfrage (Testaufbau) | VRAM GPU 1 |
+|---|---:|---:|---:|
+| 512 | 692,1 t/s → **49,1 s** | 517 Tok → 1,19 s | — |
+| 1024 | 776,3 t/s → 43,8 s | 1029 Tok → 1,96 s | — |
+| **2048** | **809,5 t/s → 42,0 s** | 2053 Tok → 3,58 s | — |
+| 4096 | 783,5 t/s → 43,4 s | 4097 Tok → 6,92 s | **31,62 / 32,75 GB** |
 
-Der Kaltstart verliert 3,2 % (Baseline über fünf Läufe 809,4–810,3, also klar außerhalb des
-Rauschens). Der eigentliche Schaden ist aber die **Feinkörnigkeit der Cache-Wiederverwendung**: der
-Prompt-Cache stellt nur bis zur Chunk-Grenze wieder her, und die Chunk-Größe ist die physische
-Batchgröße. Ein größerer `-ub` verdoppelt damit die neu zu rechnenden Tokens bei Folgeanfragen —
-genau dem Betriebspunkt, der im Agentenbetrieb zählt.
+**Der Kaltstart hat ein klares Optimum bei 2048** — in beide Richtungen wird er schlechter. Bei
+4096 blieben zusätzlich nur 1,1 GB VRAM-Reserve, und das schon bei 34k Kontext; produktiv laufen
+48k. Der Prefill-Durchsatz steigt also **nicht** monoton mit der Batchgröße, wie man erwarten würde.
 
-Dazu blieben nur **1,1 GB VRAM-Reserve** bei 34k Kontext; produktiv laufen 48k.
+Die neu zu rechnenden Tokens bei Folgeanfragen entsprechen im Testaufbau fast exakt `-ub`. Ursache:
+**der Prompt-Cache stellt nur bis zur Chunk-Grenze wieder her, und die Chunk-Größe ist die
+physische Batchgröße.** Bricht der gemeinsame Präfix mitten in einem Chunk ab, wird der ganze Chunk
+neu gerechnet.
 
-### Das Muster hinter den drei Fehlschlägen
+> ⚠ **Eigene Fehlrechnung, dokumentiert als Warnung.** Aus der `-ub`-Spalte der Folgeanfragen habe
+> ich abgeleitet, ein kleineres `-ub` müsse gewinnen, weil Folgeanfragen vielfach anfallen —
+> „7 × 1,7 s gespart ≈ 12 s". **Falsch**, weil mein Testaufbau den Produktionsfall nicht abbildet.
+>
+> Im Test **ersetzt** jede Frage die vorherige an derselben Position, der Präfix divergiert also
+> mitten im Chunk und erzwingt den Verwurf. Claude Code **hängt** dagegen an, der Präfix wächst
+> streng monoton. Im echten Log stehen deshalb Folge-Prefills von
+> **`prompt_n = 739, 103, 359, 46, 608, 121`** — alle weit unter 2048, bei `-ub 2048`. Es gibt dort
+> also keine 2053 Tokens, die man auf 1029 drücken könnte.
+>
+> `-ub 1024` würde den Kaltstart um ~2,5 s verteuern und bei den Folgeanfragen **nichts** sparen.
+> Das Log lag beim Aufstellen der Rechnung vor. **Vor jeder Extrapolation prüfen, ob der Testaufbau
+> den produktiven Betriebspunkt trifft.**
 
-**Entscheidend ist die Annahmelänge pro Verifikationsrunde.** Alles, was sie senkt, verliert —
-verschwendetes Drafting ist nahezu gratis. Die beiden Richtungen scheitern spiegelbildlich:
-`n-max 4` vergrößert den teuren Verifikationsbatch, `p-min` verkürzt die Annahme. `n-max 3`,
-`p-min 0`, `-ub 2048` ist in allen drei Parametern das Optimum.
+Nebenbefund, der bleibt: **bei Präfix-Divergenz mitten im Chunk kostet die Wiederaufnahme eine
+volle Batchgröße** — also 2048 statt 46 Tokens. Das trifft zu, wenn Claude Code den Kontext
+komprimiert oder Nachrichten umschreibt. Wie oft das vorkommt, ist ungemessen.
+
+Der `tg`-Abfall bei `-ub 1024` (55,0–60,2 gegen 58,2–63,9) war **kein** Effekt: bei 512 liegt er
+wieder bei 56,3–62,1. Nicht monoton, also Rauschen.
+
+### Das Muster hinter den Fehlschlägen
+
+**Beim Speculative Decoding entscheidet die Annahmelänge pro Verifikationsrunde.** Alles, was sie
+senkt, verliert — verschwendetes Drafting ist mit 2,6 ms gegen 46 ms nahezu gratis. Die beiden
+Richtungen scheitern spiegelbildlich: `n-max 4` vergrößert den teuren Verifikationsbatch, `p-min`
+verkürzt die Annahme.
+
+**Beim Prefill ist es die Chunk-Größe**, und die wirkt auf zwei gegenläufige Dinge: Durchsatz
+(Optimum 2048) und Körnigkeit der Cache-Wiederverwendung (kleiner ist feiner). Weil Claude Code
+anhängt statt zu ersetzen, greift der zweite Effekt produktiv kaum — der Durchsatz entscheidet.
+
+Endstand: **`n-max 3`, `p-min 0` (Vorgabe), `-ub 2048`** — in allen drei Parametern das Optimum,
+und nur der erste war vorher falsch eingestellt.
 
 ### Zwei Flags in der Config tun nichts
 
