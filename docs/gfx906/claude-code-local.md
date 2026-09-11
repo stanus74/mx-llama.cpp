@@ -1,6 +1,8 @@
 # Claude Code gegen den lokalen Server: Diagnose und Behebung
 
-**Untersucht:** 2026-09-09, ergänzt 2026-09-10 · **Maschine:** x99 (2× MI50, gfx906) · **Stack:** llama-swap → mx-org-Build
+**Untersucht:** 2026-09-09, ergänzt 2026-09-10 und 2026-09-11 · **Maschine:** x99, gfx906 —
+**16 GB + 32 GB, asymmetrisch** (Device 0 MI50/MI60 16 368 MiB, Device 1 32 752 MiB) ·
+**Stack:** llama-swap → mx-org-Build, Layer-Split mit `--tensor-split 5,1`
 
 Claude Code lief gegen den lokalen `ornith`-Endpunkt spürbar zäh: lange Wartezeiten, abgebrochene
 Werkzeugaufrufe, blockierte Bash-Befehle. Die Ursache war **nicht** die Hardware — Prefill und
@@ -345,6 +347,134 @@ dort weiter (147 Zeichen bei „Sage OK"), `ornith-fast` gar nicht.
 
 ---
 
+## Server-Flags durchgemessen (2026-09-11)
+
+Vier Parameter der `config.yaml` einzeln vermessen. **Einer hat getragen, drei nicht.** Aufbau:
+Produktionsbefehl des `claude`-Eintrags auf Port 18080 nachgebaut, `-sm layer` wie produktiv,
+Prompt aus echten Quelldateien (33 988 Token) plus vier **verschiedene** Fragen, `temperature 0`,
+`top_k 1`, je 600 Token Ausgabe.
+
+### ✅ `--spec-draft-n-max` 2 → 3: **+19 % Decode**
+
+Die einzige Verbesserung. Im Testaufbau +7,6 bis +15,6 % über drei vergleichbare Fragen, und im
+**echten Betrieb** bestätigt:
+
+| | n-max 2 | n-max 3 |
+|---|---:|---:|
+| `#mean acc len` | 1,90 | **2,59** |
+| Annahmequote | 46,6 % | **52,9 %** |
+| `#acc rate/pos` | 0,587 / 0,310 | 0,726 / 0,526 / **0,333** |
+| Decode (Mittel) | ~40 t/s | **~47,6 t/s** |
+
+Die dritte Draft-Position wird in **33 %** der Fälle angenommen — vorher wurde nach zwei Tokens
+abgebrochen, auch wenn das dritte gepasst hätte. Pro Ausgabetoken etwa **30 % weniger
+Verifikationsrunden**, also 30 % weniger vollständige Modell-Durchläufe.
+
+`mean acc len = 1 + Σ(acc rate/pos)` — geprüft an beiden Messungen (1 + 0,587 + 0,310 = 1,897 ≈ 1,90;
+1 + 0,726 + 0,526 + 0,333 = 2,585 ≈ 2,59). Diese Identität macht die Logzeile direkt auswertbar.
+
+> ⚠ Die kumulative Statistik **steigt über die Sitzung**, das ist ein Artefakt. Die Einzelwerte je
+> Anfrage schwanken zwischen 2,15 und 3,21 ohne Richtung; der kumulative Wert konvergiert nur, weil
+> frühe kleine Stichproben an Gewicht verlieren. Nicht als „wird immer besser" lesen.
+
+### ❌ `--spec-draft-n-max 4`: −13 %
+
+| | n-max 3 | n-max 4 |
+|---|---:|---:|
+| `mean acc len` | 3,14 | 3,30 (+5 %) |
+| erzeugte Draft-Tokens | 2287 | **2895 (+27 %)** |
+| angenommene | 1632 | 1667 (+2 %) |
+| Trefferquote | 71,4 % | **57,6 %** |
+| Decode | 58,1 / 57,3 / 58,0 / 64,2 | **50,4 / 49,5 / 53,2 / 53,7** |
+
+Position 4 wird durchaus in 33 % der Fälle angenommen, die Annahmelänge steigt sogar. **Ursache
+des Verlusts: der Verifikationsbatch wächst von 4 auf 5 Positionen (+25 %)**, und bei 48k Kontext
+mit Attention über den gesamten KV kostet das mehr als die 5 % längere Annahme einbringen.
+
+### ❌ `--spec-draft-p-min > 0`: −4 bis −13 %
+
+| `p-min` | `mean acc len` | Trefferquote | Decode kalt |
+|---|---:|---:|---:|
+| **0,00** | **3,14** | 71,4 % | **58,2** |
+| 0,10 | 3,14 | 71,4 % | 57,6 |
+| 0,50 | 3,04 | 80,2 % | 54,5 |
+| 0,90 | 2,89 | **96,7 %** | 50,5 |
+
+Bei 0,10 wird **nichts** gefiltert (Statistik bis zur letzten Stelle identisch) — der MTP-Kopf liegt
+durchweg über 10 % Zuversicht. Ab 0,50 greift der Filter, und ab da wird es schlechter. Monoton,
+kein Optimum dazwischen.
+
+Die Trefferquote lässt sich auf 96,7 % treiben, **nur ist die Verschwendung fast gratis und die
+Ersparnis teuer**: ein Draft-Token kostet ~2,6 ms, eine Verifikationsrunde ~46 ms. Wegfiltern
+verkürzt die Annahmelänge und erzwingt mehr Runden (bei 0,90: 1034 statt 764 Draft-Aufrufe).
+
+### ❌ `--ubatch-size 4096`: Folgeanfragen fast doppelt so lang
+
+| | `-ub 2048` | `-ub 4096` |
+|---|---:|---:|
+| kalt, 33 988 Tok | **809,5 t/s** → 42,0 s | 783,5 t/s → 43,4 s |
+| Folgeanfrage: zu rechnende Tokens | **2053** | **4097** |
+| Folgeanfrage: Dauer | **3,58 s** | **6,92 s** |
+| VRAM GPU 1 | — | **31,62 / 32,75 GB** |
+
+Der Kaltstart verliert 3,2 % (Baseline über fünf Läufe 809,4–810,3, also klar außerhalb des
+Rauschens). Der eigentliche Schaden ist aber die **Feinkörnigkeit der Cache-Wiederverwendung**: der
+Prompt-Cache stellt nur bis zur Chunk-Grenze wieder her, und die Chunk-Größe ist die physische
+Batchgröße. Ein größerer `-ub` verdoppelt damit die neu zu rechnenden Tokens bei Folgeanfragen —
+genau dem Betriebspunkt, der im Agentenbetrieb zählt.
+
+Dazu blieben nur **1,1 GB VRAM-Reserve** bei 34k Kontext; produktiv laufen 48k.
+
+### Das Muster hinter den drei Fehlschlägen
+
+**Entscheidend ist die Annahmelänge pro Verifikationsrunde.** Alles, was sie senkt, verliert —
+verschwendetes Drafting ist nahezu gratis. Die beiden Richtungen scheitern spiegelbildlich:
+`n-max 4` vergrößert den teuren Verifikationsbatch, `p-min` verkürzt die Annahme. `n-max 3`,
+`p-min 0`, `-ub 2048` ist in allen drei Parametern das Optimum.
+
+### Zwei Flags in der Config tun nichts
+
+Aus dem Ladeprotokoll:
+
+```
+W srv load_model: cache_reuse is not supported by this context, it will be disabled
+W cmn set_process_: failed to set process priority 2 : Permission denied (13)
+```
+
+`--cache-reuse 256` wird **stillschweigend abgeschaltet** — dieser Kontext unterstützt es nicht.
+Die Präfix-Wiederverwendung läuft trotzdem, aber über die LCP-Slot-Auswahl
+(`selected slot by LCP similarity, f_sim_best = 0.998`), nicht über dieses Flag. Und `--prio 2`
+scheitert an fehlenden Rechten. Beides kann raus, sonst sucht man später an der falschen Stelle.
+
+### `ngram-mod` liefert im Agentenbetrieb nichts — bleibt trotzdem drin
+
+Drei Sitzungen, jeweils **0 angenommene Entwürfe** bei 150–290 Aufrufen. Es ist aber nicht kaputt,
+sondern braucht **wörtlich wiederkehrende Passagen**: im Testaufbau, wo das Modell Quellcode aus
+dem Prompt zitierte, erreichte es `#mean acc len = 28,5` bei Annahmeraten um 1,000 und trieb das
+Decode auf 107 t/s.
+
+Kosten laut Log: **36,7 ms gegen 11,5 s** für `draft-mtp` — ein Tausendstel. Da `mtp_args` ein
+Makro für **alle** Modelle ist und im Chat mit Code-Zitaten nachweislich liefert, bleibt es aktiv.
+Entfernen wäre Kosmetik.
+
+> ⚠ **Testfehler, der zweimal zu ungültigen Messungen führte:** bei **identischen** Anfragen trifft
+> `ngram-mod` seine eigene frühere Ausgabe (`mean acc len 28,5`, Annahmerate 1,000) und treibt tg
+> auf 107 t/s. Auch mit verschiedenen Fragen stört es noch, wenn die Antwort Code aus dem Prompt
+> zitiert. Für `n-max`- oder `p-min`-Vergleiche **`--spec-type draft-mtp` allein** fahren.
+
+### Methodisches
+
+- **Kontrollmessung ist Pflicht.** `n-max 3` wurde dreimal gefahren und lieferte **identische**
+  Draft-Statistik (2287 / 1632 / 764 Runden, 3,14) bei tg innerhalb 0,5 %. Das Drafting ist bei
+  `temperature 0` vollständig deterministisch — erst dadurch sind Differenzen von 3 % deutbar.
+- **Vor dem Test `curl http://127.0.0.1:8080/unload`**, nicht `kill`. llama-swap gibt den VRAM
+  sauber frei und läuft weiter. Danach das Modell mit einer Minimalanfrage wieder anwärmen, sonst
+  zahlt der Nutzer den Kaltstart.
+- `-sm` ist produktiv **nicht** gesetzt, also Layer-Split — passend zur `AGENTS.md`-Regel
+  „MTP-Modelle → Layer-Split". Messungen mit `-sm tensor` sind nicht übertragbar.
+
+---
+
 ## Was **nicht** gelöst ist
 
 **Die Schleifenbildung selbst.** Der Loopguard rendert nachweislich die Warnung — ob sie ein
@@ -356,8 +486,27 @@ dort weiter (147 Zeichen bei „Sage OK"), `ornith-fast` gar nicht.
 die Sitzungsbenennung nicht funktionierte, hatte **zwei** Ursachen — diese hier und das 404 aus
 Befund 6. Nur letzteres ließ sich beheben.
 
-**Der Kaltstart.** Nach `ttl: 3600` kostet der erste Aufruf ~60 s. `ttl: 0` würde helfen, ist aber
-durch die `exclusive`-Gruppe begrenzt — für zwei 27-GB-Modelle nebeneinander reicht der VRAM nicht.
+**Der Kaltstart — und er ist der größte verbleibende Posten.** Gemessen am 2026-09-11:
+
+```
+prompt eval time = 66499.35 ms / 48187 tokens (724.62 t/s)
+```
+
+**66,5 Sekunden**, mit fallendem Durchsatz von 1258 auf 737 t/s über die Kontextlänge. Eine Woche
+vorher waren es 38 463 Token und 52,6 s — der Prompt wächst.
+
+Zum Vergleich: der gesamte MTP-Gewinn (`n-max 3`) spart etwa **eine halbe Sekunde** pro
+Folgeanfrage. Der Kaltstart liegt zwei Größenordnungen darüber.
+
+> ⚠ **Korrektur einer früheren Annahme:** Ich hatte diese großen Prefills dem System-Prompt
+> zugeschrieben und daraus `CLAUDE_LOCAL_LEAN=1` als Hauptlösung abgeleitet. Das Log widerlegt das
+> teilweise — vor dem 48k-Aufruf lief ein Aufruf mit nur 739 Token. Die 48k sind also **angehäufte
+> Konversation samt gelesener Dateien**, nicht nur der System-Prompt. LEAN
+> (`--bare --exclude-dynamic-system-prompt-sections`) kürzt nur den System-Prompt-Anteil und kann
+> den Kaltstart daher **nicht beseitigen**, nur verkleinern. Wie viel, ist **ungemessen**.
+
+`ttl: 0` würde das Nachladen vermeiden, ist aber durch die `exclusive`-Gruppe begrenzt — für zwei
+27-GB-Modelle nebeneinander reicht der VRAM nicht.
 
 **Modellqualität.** Ein 35B-A3B ist für agentische Werkzeugketten schwächer als die Modelle, für
 die Claude Code gebaut wurde. Keine Konfiguration ändert das.
