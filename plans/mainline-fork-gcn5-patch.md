@@ -568,3 +568,69 @@ zwei bis vier Wochen genügt.
 | Mainlines MMQ profitiert anders als der Legacy-Pfad | Gewinn kleiner als +17 % | Schritt 4 (Sweep) statt Übernahme des alten Werts |
 | Verlust der MTP-Optimierung fällt im Betrieb stärker auf als gedacht | Prefill-Regression im Server | Vor der Umstellung mit realem Workload gegenmessen |
 | Taktschwankungen verfälschen den Sweep | Falsche Parameterwahl | Phase 0 aus `gfx906-naechste-optimierungsschritte.md` vorher abschließen |
+
+---
+
+## ❌ MMQ-Config gestrichen (2026-09-13)
+
+**Mainline hat den Patch eingeholt.** Commit `c8edceb06` („ggml-cuda: hip add specific config table
+for AMD GCN", PR #27841, in `b10929`) fügt `mmq-config-gcn.cuh` hinzu — eine GCN-Config-Tabelle mit
+demselben Zweck wie unsere.
+
+### Der Rebase legte den Patch still, ohne Konflikt
+
+`git rebase --onto b10929` lief über alle 43 Commits **konfliktfrei**, und die Prüfung auf verlorene
+Upstream-Zeilen war sauber. Trotzdem war der Patch danach **toter Code**: Mainline setzt
+
+```c
+if (GGML_CUDA_CC_IS_GCN(cc)) { return ggml_cuda_mmq_get_config_gcn(...); }
+```
+
+**vor** unsere `VEGA20`-Abfrage, und `GGML_CUDA_CC_IS_GCN` ist für gfx906 wahr
+(`cc > OFFSET_AMD && cc < CDNA1`). Device-seitig dasselbe: `GCN5` impliziert `GCN`
+(`vendors/hip.h`), also greift `#ifdef GCN` vor `#elif defined(__gfx906__)`.
+
+Genau die Fehlerklasse, die [AGENTS.md](../AGENTS.md) für Upstream-Merges beschreibt — nur hier bei
+einem Rebase und ohne jede Warnung von Git.
+
+### A/B auf identischer Basis `b10929`, Produktionstopologie (Layer-Split)
+
+| Modell | mainline `gcn` | unsere `gcn5` | Δ |
+|---|---:|---:|---:|
+| Ornith-1.5-35B-A3B **MoE** Q6_K | **894,41 ± 2,96** | 874,78 ± 0,82 | **−2,2 %** |
+| Qwen3.8-27B **dense** Q6_K | 214,98 ± 0,24 | **241,15 ± 0,25** | **+12,2 %** |
+| dense mit `-sm tensor` | 340,34 ± 0,95 | **387,94 ± 1,24** | **+14,0 %** |
+
+Decode überall gleichauf. Mainline hat `nthreads=512` für 73 von 250 Einträgen übernommen — unseren
+Hauptbefund, unabhängig bestätigt. Der ursprüngliche Vorsprung von +16,1 % ist damit weg.
+
+### Der Vorteil ist nicht zerlegbar
+
+Hypothese war, `stream_k` allein erkläre den Dense-Vorsprung — dann hätte eine geänderte Spalte in
+Mainlines Tabelle gereicht. **Gemessen, widerlegt:** Mainlines Config mit `stream_k=true` für
+Q2_K–Q6_K ergibt **540,48** (MoE) und **136,61** (dense) — **−40 % bzw. −36 %**.
+
+`stream_k` wirkt nur zusammen mit `nthreads=512` und `I=128`. Mainlines `I=64` bei 256 Threads
+erzeugt viermal so viele kleine Kacheln, und der Fixup-Pass je Kachel frisst den Ausgleichsgewinn.
+Wer die +12–14 % will, braucht die **ganze** Tabelle plus eine dauerhafte Dispatch-Umstellung.
+
+### Entscheidung
+
+**Gestrichen.** Gründe:
+
+1. Der verbliebene Vorteil betrifft **nur Prefill auf dichten Modellen**; auf MoE ist der Patch 2,2 %
+   *schlechter*.
+2. Produktiv läuft er nirgends — `config.yaml` setzt `server:` für **alle** Modelle auf den
+   mx-org-Build, und der ist bei MoE nochmals **+20 %** schneller als beide (1071,21).
+3. Auf mx-org wäre er ohnehin wirkungslos: dort greift `ggml_cuda_repack_mul_mat_should_fire()` vor
+   dem MMQ-Dispatch, und `ggml_cuda_repack_tensor_supported()` deckt Q4_K, Q5_K und Q6_K ab — die
+   Matmuls erreichen `mul_mat_q` nie.
+4. Die Dispatch-Umstellung müsste ab jetzt bei **jedem** Rebase geprüft werden, an einer Stelle, die
+   Upstream aktiv weiterentwickelt.
+
+**Der Fork trägt damit nur noch den q8_1-Cache: 176 Zeilen in vier Dateien.**
+Nachgemessen auf `b10929`: **896,11 ± 2,73** gegen reines Mainline **889,52 ± 2,78**, also **+0,7 %**.
+`test-backend-ops`: MUL_MAT 1299 OK, MUL_MAT_ID 915 OK, 0 FAIL.
+
+Die MMQ-Arbeit bleibt in der Historie und in diesem Dokument — die Messungen waren richtig, die
+Situation hat sich geändert.
