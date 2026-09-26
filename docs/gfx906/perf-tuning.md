@@ -146,3 +146,25 @@ Edit this page
 Last updated on May 13, 2026 by mixa3607
 Previous
 ROCm * graphs * GPUs bench
+
+## K-quant dense-fusion flag (mx-org-densefuse, uncommitted, 2026-09-26)
+
+Env-Flag `GGML_CUDA_REPACK_KQUANT_DENSE_FUSION=1`, gefunden in `/opt/mx-org-densefuse` auf
+192.168.178.71, Branch `dense-kquant-fusion`, Basis Org-Commit `5542318e7`. Nicht committed
+(reiner Working-Tree-Patch), nicht in mxorig/master enthalten (`git log -S` liefert nichts).
+
+Patch: 13 Zeilen in `ggml/src/ggml-cuda/q8_repack/repack-common.cu`. Erweitert
+`ggml_cuda_repack_mmv_fusion_supported` (bisher nur Q8_0/MXFP4) um Q4_K/Q5_K/Q6_K/IQ4_NL,
+gesteuert per Env-Var-Gate. Verschmilzt Repack- und Mat-Vec-Kernel zu einem Aufruf statt zwei
+(spart Kernel-Launch + Zwischenspeicher-Roundtrip) — wirkt nur beim Single-Token-Decode
+(Mat-Vec), nicht beim Prompt-Processing (Mat-Mat, Batch).
+
+Messung: Qwen-35B-A3B MoE, Q5_K_M, 2x MI50 (16G+32G), ROCm, ngl=999:
+
+| Modus | pp512 (t/s) | tg128 (t/s) |
+|---|---|---|
+| Flag OFF (Baseline) | 962.69 ± 12.98 | 63.60 ± 0.12 |
+| Flag ON | 963.49 ± 13.67 | 65.70 ± 0.16 |
+
+→ pp512 unverändert (im Rauschen), tg128 **+3.3%**, außerhalb der Standardabweichung.
+Kostenloser Decode-Speedup per Flag, aber experimentell/unvalidiert — daher nicht default-on.
