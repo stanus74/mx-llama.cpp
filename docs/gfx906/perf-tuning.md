@@ -168,3 +168,84 @@ Messung: Qwen-35B-A3B MoE, Q5_K_M, 2x MI50 (16G+32G), ROCm, ngl=999:
 
 → pp512 unverändert (im Rauschen), tg128 **+3.3%**, außerhalb der Standardabweichung.
 Kostenloser Decode-Speedup per Flag, aber experimentell/unvalidiert — daher nicht default-on.
+
+## exabit-io/mx-llama.cpp: gfx906 max-ilp scheduler (2026-09-28)
+
+Geklont nach `/opt/exabit-mx-llama.cpp` auf 192.168.178.71 (`exabit-io/mx-llama.cpp`,
+`master` @ `82868aa3b`). Gebaut mit `mx-compile.sh` + `-DGGML_HIP_GFX906_MAX_ILP=OFF`
+noetig fuer ROCm 6.3.4 — der Default `ON` fuegt `-mllvm -amdgpu-sched-strategy=max-ilp`
+hinzu, was der hier verfuegbare Clang nicht kennt (das exabit-Setup faehrt ROCm 10.0).
+RCCL ist im Build per `mx-compile.sh` bereits aktiviert (`GGML_HIP_RCCL=ON`).
+
+Vergleich Gemma4-26B-A4B Q6_K_XL, f16 KV, zwei MI50 (32GB+16GB):
+
+| Split | Build | pp512 (t/s) | tg128 (t/s) |
+|---|---|---|---|
+| 2/1 | upstream (plain) | 928.69 | 59.87 |
+| 2/1 | mx-org (eefc4e732) | 1151.22 ± 16.20 | 68.91 |
+| 2/1 | exabit | 1089.70 ± 141.59 | 71.38 |
+| 3/1 | upstream (plain) | 934.33 | 61.37 |
+| 3/1 | mx-org (eefc4e732) | 1146.94 ± 11.18 | 70.24 |
+| 3/1 | exabit | 1153.97 ± 13.21 | 71.43 |
+
+pp512: mx-org und exabit praktisch gleichauf (~1150 t/s), beide +24-27% vor upstream.
+tg128: exabit gewinnt klar — +2.2 bis +3.6% vor mx-org, +16-19% vor upstream.
+Bestes Gesamt-Setup: exabit-Build, tensor-split 3/1. `server`-Macro in
+`/opt/llama.cpp/config.yaml` zeigt seit 2026-09-28 auf
+`/opt/exabit-mx-llama.cpp/build/bin/llama-server`.
+
+**Korrektur (2026-09-28, spaeter):** `-DGGML_HIP_GFX906_MAX_ILP=OFF` war fuer
+den erfolgreichen exabit-Build *noetig* (siehe unten) — der max-ilp-Scheduler
+war in den obigen Zahlen also gar nicht aktiv. Der gemessene Gewinn kommt aus
+den anderen 17 exabit-Patches (MMVQ-Q8-Fastpath, Norm+Add-Fusion,
+GDN-Producer-Fold, DPP-Warp-Reductions, MMVQ-16-Column), nicht aus max-ilp.
+
+## GGML_HIP_GFX906_MAX_ILP: auf diesem ROCm-6.3.4-Toolchain nicht baubar
+
+Portierversuch auf plain Upstream (`/opt/llama.cpp`, reiner CMake-Patch, siehe
+`git show 82868aa3b -- ggml/CMakeLists.txt ggml/src/ggml-hip/CMakeLists.txt`)
+schlaegt mit exakt demselben Fehler fehl wie zuvor beim exabit-Build:
+
+```
+clang (LLVM option parsing): Unknown command line argument '-amdgpu-sched-strategy=max-ilp'.
+```
+
+Der hier installierte Clang (ROCm 6.3.4) kennt diese LLVM-Option schlicht
+nicht — das exabit-Setup faehrt laut deren README ROCm 10.0. Patch wieder
+zurueckgenommen (`git checkout -- ggml/CMakeLists.txt
+ggml/src/ggml-hip/CMakeLists.txt`). Ohne ROCm-Upgrade auf diesem Host nicht
+nutzbar, weder bei exabit noch bei plain Upstream.
+
+## HSA_XNACK=0 ist Pflicht, steht aber in keiner Shell-Init-Datei (2026-09-28)
+
+`/opt/llama.cpp/mx-compile.sh` (eigenes, ausgereifteres Build-Skript neben
+dem mx-org-`mx-compile.sh`, baut plain Upstream bereits mit
+`GGML_HIP_RCCL=ON` als Default) dokumentiert:
+
+```
+export HSA_XNACK=0        # PFLICHT: sonst melden sich die Karten als
+                           # xnack+, rocBLAS hat dafuer keinen Sgemm-Kernel,
+                           # MoE-Modelle stuerzen beim Prefill ab
+export HSA_P2P_DISABLE=1  # X99: kein PLX-Switch zwischen den MI50-Root-Ports
+export HIP_FORCE_P2P_DISABLE=1
+```
+
+Der laufende `llama-swap`-Prozess (PID per `pgrep -af llama-swap`) hat diese
+Variablen tatsaechlich gesetzt (`cat /proc/<pid>/environ`), aber **in keiner
+.bashrc/.profile/systemd-Unit** — vermutlich manuell in einer offen gehaltenen
+Shell exportiert, bevor `llama-swap` gestartet wurde. Der Kommentar in
+`config.yaml` ("siehe .bashrc: HSA_P2P_DISABLE=1") ist veraltet/falsch, es
+gibt keine solche Zeile in `~/.bashrc`.
+
+Alle `llama-bench`-Ad-hoc-Messungen dieser Session (2026-09-26..28) liefen
+**ohne** `HSA_XNACK=0` — nur mit `HSA_OVERRIDE_GFX_VERSION`,
+`HIP_VISIBLE_DEVICES`, `GGML_HIP_GRAPHS`, `GGML_HIP_ALLOC_GRAPH` gesetzt.
+Nichts ist gecrasht, aber die Zahlen sind insofern nicht 1:1 mit einer
+Produktionsumgebung vergleichbar, die das Flag konsequent setzt. Fuer
+reproduzierbare Zukunftsmessungen: `HSA_XNACK=0` immer mitsetzen, da
+nicht-interaktives SSH `.bashrc` ohnehin nicht liest.
+
+Empfehlung (noch nicht umgesetzt): `llama-swap` ueber eine systemd-Unit mit
+festen `Environment=`-Zeilen statt einer manuell offen gehaltenen Shell
+starten, damit der Prozess einen Neustart des Hosts uebersteht ohne dass die
+Pflicht-Variablen verloren gehen.
