@@ -1127,6 +1127,26 @@ const func_builtins & value_array_t::get_builtins() const {
             if (!is_val<value_array>(args.get_pos(0))) {
                 throw raised_exception("map: first argument must be an array");
             }
+            if (is_val<value_string>(args.get_args().at(1))) {
+                // map('filter', ...args): apply a builtin filter to every item
+                const std::string name = args.get_args().at(1)->as_string().str();
+                auto out = mk_val<value_array>();
+                for (const auto & item : args.get_pos(0)->as_array()) {
+                    const auto & builtins = item->get_builtins();
+                    auto it = builtins.find(name);
+                    if (it == builtins.end()) {
+                        throw raised_exception("map: unknown filter '" + name + "' for type " + item->type());
+                    }
+                    func_args fa(args.ctx);
+                    fa.func_name = name;
+                    fa.push_back(item);
+                    for (size_t i = 2; i < args.count(); i++) {
+                        fa.push_back(args.get_args().at(i));
+                    }
+                    out->push_back(it->second(fa));
+                }
+                return is_val<value_tuple>(args.get_pos(0)) ? mk_val<value_tuple>(std::move(out->as_array())) : out;
+            }
             if (!is_val<value_kwarg>(args.get_args().at(1))) {
                 throw not_implemented_exception("map: filter-mapping not implemented");
             }

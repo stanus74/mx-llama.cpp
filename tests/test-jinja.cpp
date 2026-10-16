@@ -1770,6 +1770,12 @@ static void test_array_methods(testing & t) {
         "x y z "
     );
 
+    test_template(t, "array|map with string filter",
+        "{{ arr|map('upper')|join(',') }}",
+        {{"arr", json::array({"string", "number"})}},
+        "STRING,NUMBER"
+    );
+
     test_template(t, "array|map with filter",
         "{{ arr|map('int')|sum }}",
         {{"arr", json::array({"1", "2", "3"})}},
