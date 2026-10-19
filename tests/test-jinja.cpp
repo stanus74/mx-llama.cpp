@@ -1846,6 +1846,24 @@ static void test_array_methods(testing & t) {
         "6"
     );
 
+    test_template(t, "array|sum",
+        "{{ arr|sum }}",
+        {{"arr", json::array({1, 2, 3})}},
+        "6"
+    );
+
+    test_template(t, "array|sum floats and start",
+        "{{ arr|sum(start=1) }}",
+        {{"arr", json::array({0.5, 2})}},
+        "3.5"
+    );
+
+    test_template(t, "array|sum attribute",
+        "{{ arr|sum(attribute='n') }}",
+        {{"arr", json::array({{{"n", 4}}, {{"n", 5}}})}},
+        "9"
+    );
+
     test_template(t, "array|min",
         "{{ [tool_calls_count, tool_sep_count]|min }}",
         {{"tool_calls_count", 2}, {"tool_sep_count", 1}},

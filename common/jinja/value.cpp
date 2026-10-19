@@ -1225,6 +1225,34 @@ const func_builtins & value_array_t::get_builtins() const {
             std::reverse(arr.begin(), arr.end());
             return is_val<value_tuple>(val) ? mk_val<value_tuple>(std::move(arr)) : mk_val<value_array>(std::move(arr));
         }},
+        {"sum", [](const func_args & args) -> value {
+            args.ensure_count(1, 3);
+            args.ensure_vals<value_array>();
+            value attribute = args.get_kwarg_or_pos("attribute", 1);
+            value start     = args.get_kwarg_or_pos("start",     2);
+            value undef = mk_val<value_undefined>();
+            int64_t sum_int = 0;
+            double  sum_flt = 0.0;
+            bool    is_flt  = false;
+            auto add = [&](const value & v) {
+                if (is_val<value_int>(v)) {
+                    sum_int += v->as_int();
+                    sum_flt += (double) v->as_int();
+                } else if (is_val<value_float>(v)) {
+                    is_flt = true;
+                    sum_flt += v->as_float();
+                } else {
+                    throw raised_exception("sum: values must be numbers");
+                }
+            };
+            if (!start->is_undefined()) {
+                add(start);
+            }
+            for (const auto & item : args.get_pos(0)->as_array()) {
+                add(attribute->is_undefined() ? item : get_attribute(item, attribute, undef));
+            }
+            return is_flt ? (value) mk_val<value_float>(sum_flt) : (value) mk_val<value_int>(sum_int);
+        }},
         {"min", [](const func_args & args) -> value {
             args.ensure_count(1, 4);
             args.ensure_vals<value_array>();
